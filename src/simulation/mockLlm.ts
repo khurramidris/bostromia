@@ -629,6 +629,23 @@ export function createMockLlm(options: MockLlmOptions = {}): MockLlmClient {
         }
       }
 
+      // Open Genesis trial: enterprising agents occasionally initiate open_action orgs/norms in open_genesis mode
+      if (
+        world.genesisMode === 'open_genesis' &&
+        world.scenarioId !== 'paper_valentine' &&
+        (reasonLow.includes('open_action') || (world.simMinutes >= 2880 && rand() < 0.28)) &&
+        (world.organizations?.length ?? 0) < 3
+      ) {
+        const firstName = agent.name.split(' ')[0];
+        return {
+          action: 'open_action',
+          openIntent: `Establish ${firstName}'s Mutual Aid & Artisan Guild to pool voluntary dues for hard times.`,
+          reason: `Organizing ${firstName}'s Mutual Aid & Artisan Guild in Smallville.`,
+          locationId: agent.currentLocationId ?? 'town_hall',
+          emoji: '✨',
+        };
+      }
+
       const openProposal = (world.proposals ?? []).find(
         (p) =>
           p.status === 'open' &&

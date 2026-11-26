@@ -18,6 +18,7 @@ import {
   deleteServerWorld,
   fetchServerMetrics,
   fetchServerWorldWithStatus,
+  requestArbitrateOpenAction,
   requestAutonomousDecision,
   requestConversation,
   requestEmbeddings,
@@ -447,8 +448,24 @@ export default function App() {
             formatSimTime(snap.simMinutes).fullLabel,
             job.forkReason,
           );
+          let decision = res.decision;
+          if (decision.action === 'open_action' && decision.openIntent && (!decision.openOps || decision.openOps.length === 0)) {
+            try {
+              const arb = await requestArbitrateOpenAction(
+                snap,
+                agent,
+                decision.openIntent,
+                formatSimTime(snap.simMinutes).fullLabel,
+              );
+              if (arb.ops && arb.ops.length > 0) {
+                decision = { ...decision, openOps: arb.ops };
+              }
+            } catch {
+              // Offline conservation compiler in applyAutonomousDecision handles fallback seamlessly
+            }
+          }
           commitWorld(
-            applyAutonomousDecision(worldRef.current, agentId, res.decision, {
+            applyAutonomousDecision(worldRef.current, agentId, decision, {
               deferUntilArrival: true,
             }),
             true,

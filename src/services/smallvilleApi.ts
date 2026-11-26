@@ -874,6 +874,36 @@ export async function requestAutonomousDecision(
       strength: n.strength,
     }));
 
+  const organizations = (world.organizations ?? [])
+    .filter((o) => o.active)
+    .slice(0, 8)
+    .map((o) => ({
+      id: o.id,
+      name: clip(o.name, 80),
+      charter: clip(o.charter, 160),
+      treasury: o.treasury,
+      memberCount: Object.keys(o.memberRoles).length,
+    }));
+
+  const emergentNorms = (world.emergentNorms ?? [])
+    .filter((n) => n.active)
+    .slice(0, 8)
+    .map((n) => ({
+      id: n.id,
+      statement: clip(n.statement, 160),
+      strength: n.strength,
+    }));
+
+  const customAssets = (world.customAssets ?? [])
+    .filter((a) => a.quantity > 0)
+    .slice(0, 8)
+    .map((a) => ({
+      id: a.id,
+      name: clip(a.name, 80),
+      unitValue: a.unitValue,
+      ownerId: a.ownerId,
+    }));
+
   const result = await postJson<BdiDecisionResult>(
     '/api/agent/decide',
     {
@@ -896,6 +926,9 @@ export async function requestAutonomousDecision(
       activeShocks,
       activeRumors,
       culturalNorms,
+      organizations,
+      emergentNorms,
+      customAssets,
     },
     45_000,
   );
@@ -1232,5 +1265,34 @@ export async function requestSleepConsolidation(
       memories,
     },
     50_000,
+  );
+}
+
+export async function requestArbitrateOpenAction(
+  world: WorldState,
+  agent: AgentState,
+  openIntent: string,
+  simTimeLabel: string,
+) {
+  const noRetr = Boolean(world.ablations?.noMemoryRetrieval);
+  const built = buildAgentPayload(agent, world.locations, world.objects, openIntent, world.simMinutes, undefined, 0, noRetr);
+  return postJson<{ narrative: string; ops: BdiDecisionResult['openOps'] }>(
+    '/api/world/arbitrate',
+    {
+      agent: built.payload,
+      openIntent: clip(openIntent, 220),
+      simTimeLabel: clip(simTimeLabel, 120),
+      locations: world.locations.slice(0, 40).map((l) => ({ id: l.id, name: clip(l.name, 120) })),
+      validAgentIds: world.agents.slice(0, 60).map((a) => a.id),
+      organizations: (world.organizations ?? [])
+        .filter((o) => o.active)
+        .slice(0, 8)
+        .map((o) => ({ id: o.id, name: clip(o.name, 80), treasury: o.treasury })),
+      emergentNorms: (world.emergentNorms ?? [])
+        .filter((n) => n.active)
+        .slice(0, 8)
+        .map((n) => ({ id: n.id, statement: clip(n.statement, 160) })),
+    },
+    40_000,
   );
 }

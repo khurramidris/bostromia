@@ -1,4 +1,5 @@
 import type {
+  AtomicWorldOp,
   BdiDecisionResult,
   BeliefPredicate,
   CoalitionAgenda,
@@ -898,7 +899,193 @@ const VALID_WORLD_ACTIONS: ReadonlySet<WorldActionKind> = new Set([
   'spread_rumor',
   'fact_check',
   'endorse_norm',
+  'open_action',
 ]);
+
+export function normalizeOpenActionOps(
+  rawOps: unknown,
+  validAgentIds?: ReadonlySet<string>,
+  validLocationIds?: ReadonlySet<string>,
+): AtomicWorldOp[] {
+  if (!Array.isArray(rawOps)) return [];
+  const ops: AtomicWorldOp[] = [];
+  const hasAgent = (id: string) => Boolean(id) && (!validAgentIds || validAgentIds.has(id));
+  const hasLoc = (id: string) => Boolean(id) && (!validLocationIds || validLocationIds.has(id));
+  const positiveInt = (val: unknown, max: number): number => {
+    const n = typeof val === 'number' ? val : Number(val);
+    if (!Number.isFinite(n) || Math.round(n) <= 0) return 0;
+    return Math.min(max, Math.round(n));
+  };
+
+  for (const item of rawOps.slice(0, 4)) {
+    if (!item || typeof item !== 'object') continue;
+    const o = item as Record<string, unknown>;
+    const kind = cleanString(o.op).toLowerCase();
+
+    switch (kind) {
+      case 'transfer_cash': {
+        const fromId = cleanString(o.fromId);
+        const toId = cleanString(o.toId);
+        const amount = positiveInt(o.amount, 250);
+        if (hasAgent(fromId) && hasAgent(toId) && fromId !== toId && amount > 0) {
+          ops.push({
+            op: 'transfer_cash',
+            fromId,
+            toId,
+            amount,
+            note: cleanString(o.note, 'Direct agreement payment').slice(0, 140),
+          });
+        }
+        break;
+      }
+      case 'create_org': {
+        const name = cleanString(o.name).slice(0, 80);
+        const charter = cleanString(o.charter).slice(0, 220);
+        const hq = cleanString(o.headquartersLocationId);
+        if (name && charter) {
+          ops.push({
+            op: 'create_org',
+            name,
+            charter,
+            ...(cleanString(o.roleTitle) ? { roleTitle: cleanString(o.roleTitle).slice(0, 40) } : {}),
+            ...(o.initialContribution !== undefined
+              ? { initialContribution: clampInt(o.initialContribution, 0, 150, 0) }
+              : {}),
+            ...(o.duesAmount !== undefined ? { duesAmount: clampInt(o.duesAmount, 0, 40, 0) } : {}),
+            ...(hasLoc(hq) ? { headquartersLocationId: hq } : {}),
+            ...(cleanString(o.rule) ? { rule: cleanString(o.rule).slice(0, 160) } : {}),
+          });
+        }
+        break;
+      }
+      case 'join_org': {
+        const orgId = cleanString(o.orgId);
+        if (orgId) {
+          ops.push({
+            op: 'join_org',
+            orgId,
+            ...(cleanString(o.roleTitle) ? { roleTitle: cleanString(o.roleTitle).slice(0, 40) } : {}),
+            ...(o.contribution !== undefined
+              ? { contribution: clampInt(o.contribution, 0, 150, 0) }
+              : {}),
+          });
+        }
+        break;
+      }
+      case 'org_contribute': {
+        const orgId = cleanString(o.orgId);
+        const amount = positiveInt(o.amount, 150);
+        if (orgId && amount > 0) {
+          ops.push({
+            op: 'org_contribute',
+            orgId,
+            amount,
+            ...(cleanString(o.note) ? { note: cleanString(o.note).slice(0, 120) } : {}),
+          });
+        }
+        break;
+      }
+      case 'org_payout': {
+        const orgId = cleanString(o.orgId);
+        const toAgentId = cleanString(o.toAgentId);
+        const amount = positiveInt(o.amount, 250);
+        if (orgId && hasAgent(toAgentId) && amount > 0) {
+          ops.push({
+            op: 'org_payout',
+            orgId,
+            toAgentId,
+            amount,
+            reason: cleanString(o.reason, 'Organization disbursement').slice(0, 140),
+          });
+        }
+        break;
+      }
+      case 'propose_norm': {
+        const statement = cleanString(o.statement).slice(0, 180);
+        if (statement.length >= 8) {
+          ops.push({ op: 'propose_norm', statement });
+        }
+        break;
+      }
+      case 'adopt_or_challenge_norm': {
+        const normId = cleanString(o.normId);
+        if (normId) {
+          ops.push({
+            op: 'adopt_or_challenge_norm',
+            normId,
+            adopt: o.adopt !== false,
+          });
+        }
+        break;
+      }
+      case 'sanction_norm': {
+        const normId = cleanString(o.normId);
+        const targetAgentId = cleanString(o.targetAgentId);
+        if (normId && hasAgent(targetAgentId)) {
+          ops.push({
+            op: 'sanction_norm',
+            normId,
+            targetAgentId,
+            reason: cleanString(o.reason, 'Violated community norm').slice(0, 140),
+          });
+        }
+        break;
+      }
+      case 'create_asset': {
+        const name = cleanString(o.name).slice(0, 80);
+        const unitValue = positiveInt(o.unitValue ?? 5, 100);
+        if (name && unitValue > 0) {
+          ops.push({
+            op: 'create_asset',
+            name,
+            description: cleanString(o.description, name).slice(0, 180),
+            unitValue,
+            ...(o.quantity !== undefined ? { quantity: clampInt(o.quantity, 1, 20, 1) } : {}),
+            ...(cleanString(o.organizationId) ? { organizationId: cleanString(o.organizationId) } : {}),
+          });
+        }
+        break;
+      }
+      case 'trade_asset': {
+        const assetId = cleanString(o.assetId);
+        const buyerId = cleanString(o.buyerId);
+        const price = positiveInt(o.price, 200);
+        if (assetId && hasAgent(buyerId) && price > 0) {
+          ops.push({ op: 'trade_asset', assetId, buyerId, price });
+        }
+        break;
+      }
+      case 'publish_record': {
+        const title = cleanString(o.title).slice(0, 110);
+        const body = cleanString(o.body).slice(0, 340);
+        const loc = cleanString(o.locationId);
+        if (title && body) {
+          ops.push({
+            op: 'publish_record',
+            title,
+            body,
+            ...(hasLoc(loc) ? { locationId: loc } : {}),
+          });
+        }
+        break;
+      }
+      case 'shift_relation': {
+        const targetAgentId = cleanString(o.targetAgentId);
+        if (hasAgent(targetAgentId)) {
+          ops.push({
+            op: 'shift_relation',
+            targetAgentId,
+            deltaTrust: clampInt(o.deltaTrust, -16, 16, 0),
+            deltaAffection: clampInt(o.deltaAffection, -16, 16, 0),
+            reason: cleanString(o.reason, 'Interpersonal shift').slice(0, 120),
+          });
+        }
+        break;
+      }
+    }
+  }
+  return ops;
+}
 
 const VALID_NORM_KEYS: ReadonlySet<CulturalNormKey> = new Set([
   'debt_honor',
@@ -1257,6 +1444,8 @@ export function normalizeBdiDecisionPayload(
     rumorClaim: cleanString(obj.rumorClaim) ? cleanString(obj.rumorClaim).slice(0, 220) : undefined,
     isDeceptive: typeof obj.isDeceptive === 'boolean' ? obj.isDeceptive : undefined,
     normKey,
+    openIntent: cleanString(obj.openIntent) ? cleanString(obj.openIntent).slice(0, 220) : undefined,
+    openOps: obj.openOps !== undefined ? normalizeOpenActionOps(obj.openOps, undefined, validLocationIds) : undefined,
   };
 }
 

@@ -1545,6 +1545,103 @@ export const SocietyView = memo(function SocietyView({
           })}
         </div>
       </section>
+
+      {/* Open Genesis Observatory: Emergent Orgs, Free-Text Norms, Epistemic & Institutional Pulse */}
+      <section className="space-y-4">
+        <div>
+          <h2 className="font-display text-lg font-semibold text-[#1D2420]">
+            Open Genesis Observatory &amp; Epistemic Culture
+          </h2>
+          <p className="text-xs text-[#5C645E]">
+            Live view of agent-authored organizations, free-text community norms, disputes, boycotts, rumors, and arbitrated open initiatives ({world.genesisMode === 'structured_polis' ? 'Path B: Structured Polis' : 'Path A Trial: Open Genesis'}).
+          </p>
+        </div>
+
+        <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+          <div className="rounded-lg border border-[#E5E2D9] bg-white px-4 py-3">
+            <div className="text-[11px] text-[#5C645E]">Emergent Orgs</div>
+            <div className="font-mono text-lg font-semibold text-[#1D2420] tabular-nums">
+              {(world.organizations ?? []).filter((o) => o.active).length}
+            </div>
+          </div>
+          <div className="rounded-lg border border-[#E5E2D9] bg-white px-4 py-3">
+            <div className="text-[11px] text-[#5C645E]">Free-Text Norms</div>
+            <div className="font-mono text-lg font-semibold text-[#1D2420] tabular-nums">
+              {(world.emergentNorms ?? []).filter((n) => n.active).length}
+            </div>
+          </div>
+          <div className="rounded-lg border border-[#E5E2D9] bg-white px-4 py-3">
+            <div className="text-[11px] text-[#5C645E]">False-Belief Rate</div>
+            <div className="font-mono text-lg font-semibold text-[#1D2420] tabular-nums">
+              {Math.round((liveDiversity.falseBeliefRate ?? 0) * 100)}%
+            </div>
+          </div>
+          <div className="rounded-lg border border-[#E5E2D9] bg-white px-4 py-3">
+            <div className="text-[11px] text-[#5C645E]">Active Rumors / Disputes</div>
+            <div className="font-mono text-lg font-semibold text-[#1D2420] tabular-nums">
+              {(world.rumors ?? []).filter((r) => !r.debunked).length} /{' '}
+              {(world.disputes ?? []).filter((d) => d.status === 'open').length}
+            </div>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+          <article className="rounded-lg border border-[#E5E2D9] bg-white p-4 space-y-2.5">
+            <h3 className="text-xs font-semibold uppercase tracking-wide text-[#5C645E]">
+              Resident-Founded Organizations
+            </h3>
+            {(world.organizations ?? []).length === 0 ? (
+              <p className="text-xs text-[#5C645E]">
+                No agent-authored organizations yet. Residents can found guilds, mutual-aid pools, unions, or papers via open actions.
+              </p>
+            ) : (
+              <ul className="space-y-2 text-xs">
+                {(world.organizations ?? []).slice(0, 6).map((org) => (
+                  <li key={org.id} className="rounded border border-[#EFECE3] p-2.5 space-y-1">
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="font-semibold text-[#1D2420]">{org.name}</span>
+                      <span className="font-mono text-[11px] text-[#2D6A4F] tabular-nums">
+                        ${org.treasury} pool · {Object.keys(org.memberRoles).length} members
+                      </span>
+                    </div>
+                    <p className="text-[11px] text-[#5C645E]">{org.charter}</p>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </article>
+
+          <article className="rounded-lg border border-[#E5E2D9] bg-white p-4 space-y-2.5">
+            <h3 className="text-xs font-semibold uppercase tracking-wide text-[#5C645E]">
+              Emergent Norms &amp; Recent Open Arbitrations
+            </h3>
+            {(world.emergentNorms ?? []).length === 0 && (world.arbitratedActions ?? []).length === 0 ? (
+              <p className="text-xs text-[#5C645E]">
+                No free-text norms or arbitrated open actions recorded yet.
+              </p>
+            ) : (
+              <ul className="space-y-2 text-xs">
+                {(world.emergentNorms ?? []).slice(0, 4).map((n) => (
+                  <li key={n.id} className="rounded border border-[#EFECE3] p-2.5 space-y-1">
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="font-medium text-[#1D2420]">“{n.statement}”</span>
+                      <span className="font-mono text-[11px] text-[#2D6A4F] tabular-nums">
+                        {n.strength}/100 ({n.adopterIds.length} adopters)
+                      </span>
+                    </div>
+                  </li>
+                ))}
+                {(world.arbitratedActions ?? []).slice(0, 3).map((arb) => (
+                  <li key={arb.id} className="rounded border border-[#EFECE3] bg-[#FAF8F4] p-2 text-[11px]">
+                    <span className="font-semibold text-[#1D2420]">{arb.actorName.split(' ')[0]}</span>:{' '}
+                    <span className="text-[#3C4640]">{arb.narrative}</span>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </article>
+        </div>
+      </section>
     </div>
   );
 });

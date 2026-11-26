@@ -310,6 +310,11 @@ export function migrateWorldState(raw: unknown): {
       Array.isArray(parsed.culturalNorms) && parsed.culturalNorms.length > 0
         ? parsed.culturalNorms
         : createInitialCulturalNorms(simDay),
+    genesisMode: parsed.genesisMode ?? 'open_genesis',
+    organizations: Array.isArray(parsed.organizations) ? parsed.organizations : [],
+    emergentNorms: Array.isArray(parsed.emergentNorms) ? parsed.emergentNorms : [],
+    customAssets: Array.isArray(parsed.customAssets) ? parsed.customAssets : [],
+    arbitratedActions: Array.isArray(parsed.arbitratedActions) ? parsed.arbitratedActions : [],
     diversityHistory: Array.isArray(parsed.diversityHistory) ? parsed.diversityHistory : [],
     townTreasury:
       typeof parsed.townTreasury === 'number' && Number.isFinite(parsed.townTreasury)
@@ -368,6 +373,10 @@ export function migrateWorldState(raw: unknown): {
       deceptionsAttempted: parsed.stats?.deceptionsAttempted ?? 0,
       deceptionsExposed: parsed.stats?.deceptionsExposed ?? 0,
       normEndorsements: parsed.stats?.normEndorsements ?? 0,
+      openActionsArbitrated: parsed.stats?.openActionsArbitrated ?? 0,
+      orgsFounded: parsed.stats?.orgsFounded ?? 0,
+      emergentNormsCreated: parsed.stats?.emergentNormsCreated ?? 0,
+      customAssetsTraded: parsed.stats?.customAssetsTraded ?? 0,
     },
     agents: finalAgents,
   };

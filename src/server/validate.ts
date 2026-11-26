@@ -574,6 +574,39 @@ export function validateDecideBody(body: unknown): string | null {
       if (err) return err;
     }
   }
+  if (body.organizations !== undefined) {
+    const oErr = checkArray(body.organizations, 'organizations', false, 12);
+    if (oErr) return oErr;
+    for (let i = 0; i < (body.organizations as unknown[]).length; i++) {
+      const o = (body.organizations as unknown[])[i];
+      if (!isPlainObject(o)) return `organizations[${i}] must be an object.`;
+      if (!isValidId(o.id)) return `organizations[${i}].id has invalid format.`;
+      const err = checkStr(o.name, `organizations[${i}].name`, true, 100);
+      if (err) return err;
+    }
+  }
+  if (body.emergentNorms !== undefined) {
+    const eErr = checkArray(body.emergentNorms, 'emergentNorms', false, 12);
+    if (eErr) return eErr;
+    for (let i = 0; i < (body.emergentNorms as unknown[]).length; i++) {
+      const n = (body.emergentNorms as unknown[])[i];
+      if (!isPlainObject(n)) return `emergentNorms[${i}] must be an object.`;
+      if (!isValidId(n.id)) return `emergentNorms[${i}].id has invalid format.`;
+      const err = checkStr(n.statement, `emergentNorms[${i}].statement`, true, 200);
+      if (err) return err;
+    }
+  }
+  if (body.customAssets !== undefined) {
+    const aErr = checkArray(body.customAssets, 'customAssets', false, 12);
+    if (aErr) return aErr;
+    for (let i = 0; i < (body.customAssets as unknown[]).length; i++) {
+      const a = (body.customAssets as unknown[])[i];
+      if (!isPlainObject(a)) return `customAssets[${i}] must be an object.`;
+      if (!isValidId(a.id)) return `customAssets[${i}].id has invalid format.`;
+      const err = checkStr(a.name, `customAssets[${i}].name`, true, 100);
+      if (err) return err;
+    }
+  }
   return (
     validateAgentPayload(body.agent, 'agent') ||
     checkStr(body.simTimeLabel, 'simTimeLabel') ||
@@ -721,4 +754,18 @@ export function validateWorldSaveBody(body: unknown): string | null {
     return 'world.simMinutes must be a finite number.';
   }
   return null;
+}
+
+export function validateArbitrateBody(body: unknown): string | null {
+  if (!isPlainObject(body)) return 'Request body must be a JSON object.';
+  if (body.validAgentIds !== undefined) {
+    const aErr = checkArray(body.validAgentIds, 'validAgentIds', false, 80);
+    if (aErr) return aErr;
+  }
+  return (
+    validateAgentPayload(body.agent, 'agent') ||
+    checkStr(body.openIntent, 'openIntent', true, 260) ||
+    checkStr(body.simTimeLabel, 'simTimeLabel', true, 120) ||
+    validateLocationList(body.locations, 'locations', true)
+  );
 }

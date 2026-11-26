@@ -28,6 +28,10 @@ import {
   factCheckRumor,
 } from './epistemicCulture';
 import {
+  applyArbitratedOpenAction,
+  compileOfflineOpenAction,
+} from './openGenesis';
+import {
   areRivalCoalitionMembers,
   callEconomicBoycott,
   createServiceContract,
@@ -398,7 +402,10 @@ export function detectBdiDecisionFork(
   ) {
     return {
       agentId: agent.id,
-      forkReason: `Healthy cash reserves ($${wallet.toFixed(0)}) create an opening — decide whether to launch a pop-up micro-venture (launch_venture), lend/transfer funds to a neighbor, or invest in your craft.`,
+      forkReason:
+        world.genesisMode === 'open_genesis'
+          ? `Healthy cash reserves ($${wallet.toFixed(0)}) create an opening — decide whether to launch a pop-up micro-venture (launch_venture), lend funds, or pursue an open_action initiative (e.g. founding a guild, credit fund, or custom service).`
+          : `Healthy cash reserves ($${wallet.toFixed(0)}) create an opening — decide whether to launch a pop-up micro-venture (launch_venture), lend/transfer funds to a neighbor, or invest in your craft.`,
       urgency: 0.73,
     };
   }
@@ -888,6 +895,19 @@ export function executePendingBdiAction(
       nextWorld = res.world;
       executed = res.ok;
       summary = res.reason;
+      break;
+    }
+
+    case 'open_action': {
+      const intent = pending.reason;
+      const ops =
+        pending.openOps && pending.openOps.length > 0
+          ? pending.openOps
+          : compileOfflineOpenAction(nextWorld, agent.id, intent);
+      const res = applyArbitratedOpenAction(nextWorld, agent.id, intent, ops, allocId);
+      nextWorld = res.world;
+      executed = res.appliedCount > 0;
+      summary = res.record?.narrative ?? `Pursued open initiative: ${intent.slice(0, 90)}`;
       break;
     }
   }
@@ -1468,6 +1488,21 @@ export function applyBdiDecisionResult(
       blockKind = 'social';
       emoji = decision.emoji ?? '🏛️';
       activity = decision.activity ?? 'Championing shared town standards at Town Hall';
+      break;
+    }
+
+    case 'open_action': {
+      const openIntent = decision.openIntent ?? decision.reason;
+      maybeExecuteOrDefer({
+        action: 'open_action',
+        targetLocationId,
+        openIntent,
+        openOps: decision.openOps,
+        reason: openIntent,
+      });
+      blockKind = 'social';
+      emoji = decision.emoji ?? '✨';
+      activity = decision.activity ?? `Pursuing initiative: ${openIntent.slice(0, 90)}`;
       break;
     }
   }

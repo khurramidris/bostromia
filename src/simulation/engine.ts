@@ -99,6 +99,7 @@ import {
   applyDailyEpistemicAndCultureRollover,
   createInitialCulturalNorms,
 } from './epistemicCulture';
+import { applyDailyOpenGenesisRollover } from './openGenesis';
 import { hydrateWorldIntentStacks, syncAgentCommitments } from './intentStack';
 import { applyDailyPowerAndInstitutionsRollover } from './powerAndInstitutions';
 import { buildProceduralSchedule, getProceduralSocialHub } from './scaleGenerator';
@@ -227,6 +228,11 @@ export function createInitialWorldState(
     activeShocks: [],
     rumors: [],
     culturalNorms: createInitialCulturalNorms(1),
+    genesisMode: 'open_genesis',
+    organizations: [],
+    emergentNorms: [],
+    customAssets: [],
+    arbitratedActions: [],
     diversityHistory: [],
     townTreasury: 380,
     townModifiers: { ...DEFAULT_TOWN_MODIFIERS },
@@ -283,6 +289,10 @@ export function createInitialWorldState(
       deceptionsAttempted: 0,
       deceptionsExposed: 0,
       normEndorsements: 0,
+      openActionsArbitrated: 0,
+      orgsFounded: 0,
+      emergentNormsCreated: 0,
+      customAssetsTraded: 0,
     },
     reflectionThreshold: REFLECTION_THRESHOLD,
     reactionsTodayByAgent: {},
@@ -1834,6 +1844,7 @@ export function stepWorldState(
     assembledWorld = applyDailyContractsAndLifeRollover(assembledWorld, timeInfo.day, alloc.next);
     assembledWorld = applyDailyPowerAndInstitutionsRollover(assembledWorld, timeInfo.day, alloc.next);
     assembledWorld = applyDailyEpistemicAndCultureRollover(assembledWorld, timeInfo.day, alloc.next);
+    assembledWorld = applyDailyOpenGenesisRollover(assembledWorld, timeInfo.day, alloc.next);
     const divSnap = computeDiversitySnapshot(assembledWorld);
     assembledWorld = {
       ...assembledWorld,

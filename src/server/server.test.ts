@@ -1326,5 +1326,71 @@ test('Phase 3 /api/agent/decide validates activeRumors & culturalNorms, keeps gr
   }
 });
 
+test('Phase 4 /api/world/arbitrate compiles openIntent into conserved AtomicWorldOps and filters invalid ops', async () => {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'smallville-phase4-test-'));
+  try {
+    await withServer(
+      async (baseUrl) => {
+        const res = await fetch(`${baseUrl}/api/world/arbitrate`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'x-world-id': 'ffffffff-ffff-4fff-8fff-ffffffffffff',
+          },
+          body: JSON.stringify({
+            agent: makeValidAgent(),
+            openIntent: 'Start the Oak Hill Cooperative Guild with $25 pooled dues.',
+            simTimeLabel: 'Day 2 · 1:00 PM',
+            locations: [{ id: 'hobbs_cafe', name: 'Hobbs Cafe' }],
+            validAgentIds: ['isabella', 'john'],
+          }),
+        });
+        assert.equal(res.status, 200);
+        const body = (await res.json()) as {
+          narrative?: string;
+          ops?: Array<{ op: string; name?: string; initialContribution?: number }>;
+        };
+        assert.ok(body.narrative?.includes('Cooperative Guild'));
+        assert.equal(body.ops?.length, 1);
+        assert.equal(body.ops?.[0]?.op, 'create_org');
+        assert.equal(body.ops?.[0]?.initialContribution, 25);
+      },
+      {
+        config: makeTestConfig(tmpDir, { llmProvider: 'openrouter' }),
+        fetchImpl: async () =>
+          new Response(
+            JSON.stringify({
+              choices: [
+                {
+                  message: {
+                    content: JSON.stringify({
+                      narrative: 'Founded the Oak Hill Cooperative Guild with $25 initial pool.',
+                      ops: [
+                        {
+                          op: 'create_org',
+                          name: 'Oak Hill Cooperative Guild',
+                          charter: 'Support neighborhood craftspeople.',
+                          initialContribution: 25,
+                          headquartersLocationId: 'hobbs_cafe',
+                        },
+                        {
+                          op: 'unknown_hack_op',
+                          amount: 99999,
+                        },
+                      ],
+                    }),
+                  },
+                },
+              ],
+            }),
+            { status: 200, headers: { 'Content-Type': 'application/json' } },
+          ),
+      },
+    );
+  } finally {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
+});
+
 
 

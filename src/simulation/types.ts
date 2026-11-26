@@ -29,7 +29,8 @@ export type MemorySource =
   | 'dispute'
   | 'coalition'
   | 'rumor'
-  | 'norm';
+  | 'norm'
+  | 'genesis';
 
 export interface MemoryNode {
   id: string;
@@ -557,6 +558,96 @@ export interface CulturalNorm {
   lastUpdatedDay: number;
 }
 
+export type GenesisMode = 'structured_polis' | 'open_genesis';
+
+export interface EmergentOrganization {
+  id: string;
+  name: string;
+  charter: string;
+  founderId: string;
+  leaderId: string;
+  memberRoles: Record<string, string>;
+  treasury: number;
+  duesAmount: number;
+  rules: string[];
+  headquartersLocationId?: string;
+  createdDay: number;
+  active: boolean;
+}
+
+export interface EmergentNorm {
+  id: string;
+  statement: string;
+  originAgentId: string;
+  originName: string;
+  adopterIds: string[];
+  challengerIds: string[];
+  strength: number; // 0..100
+  sanctionsCount: number;
+  createdDay: number;
+  active: boolean;
+}
+
+export interface CustomAsset {
+  id: string;
+  name: string;
+  description: string;
+  creatorId: string;
+  ownerId: string;
+  unitValue: number;
+  quantity: number;
+  organizationId?: string;
+  createdDay: number;
+}
+
+export type AtomicWorldOp =
+  | { op: 'transfer_cash'; fromId: string; toId: string; amount: number; note: string }
+  | {
+      op: 'create_org';
+      name: string;
+      charter: string;
+      roleTitle?: string;
+      initialContribution?: number;
+      duesAmount?: number;
+      headquartersLocationId?: string;
+      rule?: string;
+    }
+  | { op: 'join_org'; orgId: string; roleTitle?: string; contribution?: number }
+  | { op: 'org_contribute'; orgId: string; amount: number; note?: string }
+  | { op: 'org_payout'; orgId: string; toAgentId: string; amount: number; reason: string }
+  | { op: 'propose_norm'; statement: string }
+  | { op: 'adopt_or_challenge_norm'; normId: string; adopt: boolean }
+  | { op: 'sanction_norm'; normId: string; targetAgentId: string; reason: string }
+  | {
+      op: 'create_asset';
+      name: string;
+      description: string;
+      unitValue: number;
+      quantity?: number;
+      organizationId?: string;
+    }
+  | { op: 'trade_asset'; assetId: string; buyerId: string; price: number }
+  | { op: 'publish_record'; title: string; body: string; locationId?: string }
+  | {
+      op: 'shift_relation';
+      targetAgentId: string;
+      deltaTrust: number;
+      deltaAffection: number;
+      reason: string;
+    };
+
+export interface ArbitratedActionRecord {
+  id: string;
+  simMinutes: number;
+  actorId: string;
+  actorName: string;
+  intent: string;
+  narrative: string;
+  appliedOpsCount: number;
+  rejectedOpsCount: number;
+  summaries: string[];
+}
+
 export type WorldActionKind =
   | 'work_shift'
   | 'buy_item'
@@ -584,7 +675,8 @@ export type WorldActionKind =
   | 'call_boycott'
   | 'spread_rumor'
   | 'fact_check'
-  | 'endorse_norm';
+  | 'endorse_norm'
+  | 'open_action';
 
 export type AutonomyMode = 'intent_driven' | 'legacy_schedule';
 
@@ -684,6 +776,8 @@ export interface BdiDecisionResult {
   rumorClaim?: string;
   isDeceptive?: boolean;
   normKey?: CulturalNormKey;
+  openIntent?: string;
+  openOps?: AtomicWorldOp[];
 }
 
 export type ScheduleSource =
@@ -742,6 +836,8 @@ export interface PendingBdiAction {
   rumorClaim?: string;
   isDeceptive?: boolean;
   normKey?: CulturalNormKey;
+  openIntent?: string;
+  openOps?: AtomicWorldOp[];
   executed?: boolean;
 }
 
@@ -1075,6 +1171,11 @@ export interface SimulationStats {
   deceptionsAttempted?: number;
   deceptionsExposed?: number;
   normEndorsements?: number;
+  // Phase 4: Open Genesis Trial (Emergent Organizations, Free-Text Norms, Custom Assets & Open Actions)
+  openActionsArbitrated?: number;
+  orgsFounded?: number;
+  emergentNormsCreated?: number;
+  customAssetsTraded?: number;
 }
 
 export type ScenarioId = 'default' | 'paper_valentine';
@@ -1159,4 +1260,10 @@ export interface WorldState {
   // Phase 3: Epistemic Reality, Rumors & Cultural Norms
   rumors?: TownRumor[];
   culturalNorms?: CulturalNorm[];
+  // Phase 4: Open Genesis Trial
+  genesisMode?: GenesisMode;
+  organizations?: EmergentOrganization[];
+  emergentNorms?: EmergentNorm[];
+  customAssets?: CustomAsset[];
+  arbitratedActions?: ArbitratedActionRecord[];
 }

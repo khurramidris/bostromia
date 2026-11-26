@@ -33,6 +33,11 @@ import {
   type ScenarioId,
   type WorldState,
 } from '../simulation/types';
+import {
+  runCounterfactualComparison,
+  type CounterfactualComparisonResult,
+  type CounterfactualCondition,
+} from '../simulation/counterfactualLab';
 
 interface ExperimentsViewProps {
   world: WorldState;
@@ -1102,6 +1107,108 @@ export function ExperimentsView({
           })}
         </div>
       </section>
+
+      {/* Counterfactual Society Lab (Deterministic Same-Seed Comparisons) */}
+      <CounterfactualSocietyLab />
     </div>
+  );
+}
+
+function CounterfactualSocietyLab() {
+  const [presetKey, setPresetKey] = useState<'genesis_vs_polis' | 'shock_vs_baseline'>(
+    'genesis_vs_polis',
+  );
+  const [comparison, setComparison] = useState<CounterfactualComparisonResult | null>(null);
+  const [running, setRunning] = useState(false);
+
+  const handleRunComparison = () => {
+    setRunning(true);
+    setTimeout(() => {
+      const conditions: CounterfactualCondition[] =
+        presetKey === 'genesis_vs_polis'
+          ? [
+              { id: 'structured_polis', label: 'Structured Polis (Checkpoint)', genesisMode: 'structured_polis' },
+              { id: 'open_genesis', label: 'Open Genesis (Emergent Trial)', genesisMode: 'open_genesis' },
+            ]
+          : [
+              { id: 'baseline', label: 'Baseline Economy', genesisMode: 'open_genesis' },
+              {
+                id: 'supply_shock',
+                label: 'Day-2 Supply Shortage',
+                genesisMode: 'open_genesis',
+                injectShockOnDay: { day: 2, kind: 'supply_shortage' },
+              },
+            ];
+      const out = runCounterfactualComparison(conditions, { days: 3, seed: 42, speed: 2 });
+      setComparison(out);
+      setRunning(false);
+    }, 10);
+  };
+
+  return (
+    <section className="rounded-lg border border-[#E5E2D9] bg-white p-5 space-y-4">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <h2 className="font-display text-lg font-semibold text-[#1D2420]">
+            Counterfactual Society Lab
+          </h2>
+          <p className="text-xs text-[#5C645E]">
+            Runs two 3-day simulations from the exact same seed to measure how governance regimes or economic shocks reshape society.
+          </p>
+        </div>
+        <div className="flex items-center gap-2">
+          <select
+            value={presetKey}
+            onChange={(e) => setPresetKey(e.target.value as 'genesis_vs_polis' | 'shock_vs_baseline')}
+            className="rounded border border-[#D5D0C3] bg-white px-2.5 py-1.5 text-xs text-[#1D2420]"
+          >
+            <option value="genesis_vs_polis">Structured Polis vs Open Genesis</option>
+            <option value="shock_vs_baseline">Baseline vs Day-2 Supply Shock</option>
+          </select>
+          <button
+            type="button"
+            disabled={running}
+            onClick={handleRunComparison}
+            className="inline-flex items-center gap-1.5 rounded bg-[#2D6A4F] px-3 py-1.5 text-xs font-medium text-white hover:bg-[#1B4332] disabled:opacity-50"
+          >
+            <Play className="h-3.5 w-3.5" aria-hidden="true" />
+            <span>{running ? 'Running…' : 'Run Counterfactual'}</span>
+          </button>
+        </div>
+      </div>
+
+      {comparison && (
+        <div className="overflow-x-auto">
+          <table className="w-full text-left text-xs border-collapse">
+            <thead>
+              <tr className="border-b border-[#E5E2D9] text-[#5C645E]">
+                <th className="py-2 pr-3 font-medium">Condition</th>
+                <th className="py-2 px-3 font-medium">Gini</th>
+                <th className="py-2 px-3 font-medium">Trade Vol</th>
+                <th className="py-2 px-3 font-medium">False Beliefs</th>
+                <th className="py-2 px-3 font-medium">Orgs</th>
+                <th className="py-2 px-3 font-medium">Open Actions</th>
+                <th className="py-2 pl-3 font-medium">Integrity Issues</th>
+              </tr>
+            </thead>
+            <tbody>
+              {comparison.runs.map((r) => (
+                <tr key={r.conditionId} className="border-b border-[#EFECE3]">
+                  <td className="py-2 pr-3 font-semibold text-[#1D2420]">{r.label}</td>
+                  <td className="py-2 px-3 font-mono tabular-nums">{r.giniIndex.toFixed(3)}</td>
+                  <td className="py-2 px-3 font-mono tabular-nums">${Math.round(r.tradeVolume)}</td>
+                  <td className="py-2 px-3 font-mono tabular-nums">
+                    {Math.round(r.falseBeliefRate * 100)}%
+                  </td>
+                  <td className="py-2 px-3 font-mono tabular-nums">{r.orgsCount}</td>
+                  <td className="py-2 px-3 font-mono tabular-nums">{r.openActionsArbitrated}</td>
+                  <td className="py-2 pl-3 font-mono tabular-nums">{r.validationIssues}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </section>
   );
 }

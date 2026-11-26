@@ -58,6 +58,7 @@ function actionDomain(action: WorldActionKind): AgentAmbition['domain'] {
     case 'call_boycott':
     case 'fact_check':
     case 'endorse_norm':
+    case 'open_action':
       return 'civic';
     case 'advance_project':
       return 'craft';

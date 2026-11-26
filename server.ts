@@ -17,6 +17,7 @@ import {
   normalizeGossipUpdates,
   normalizeInterviewJudgePayload,
   normalizeInterviewPayload,
+  normalizeOpenActionOps,
   normalizePlanPayload,
   normalizeReactionPayload,
   normalizeReflectionPayload,
@@ -43,6 +44,7 @@ import {
 } from './src/server/modelRouter.ts';
 import {
   isValidUuid,
+  validateArbitrateBody,
   validateConverseBody,
   validateConsolidateBody,
   validateDecideBody,
@@ -2249,6 +2251,9 @@ export function createSmallvilleApp(options: CreateAppOptions = {}) {
         activeShocks,
         activeRumors,
         culturalNorms,
+        organizations,
+        emergentNorms,
+        customAssets,
       } = req.body as {
         agent: AgentContextPayload;
         simTimeLabel: string;
@@ -2274,6 +2279,9 @@ export function createSmallvilleApp(options: CreateAppOptions = {}) {
         activeShocks?: Array<{ kind?: string; title: string; description: string }>;
         activeRumors?: Array<{ id: string; claim: string; originName?: string; hopCount?: number }>;
         culturalNorms?: Array<{ key: string; title: string; strength?: number }>;
+        organizations?: Array<{ id: string; name: string; charter?: string; treasury?: number; memberCount?: number }>;
+        emergentNorms?: Array<{ id: string; statement: string; strength?: number }>;
+        customAssets?: Array<{ id: string; name: string; unitValue?: number; ownerId?: string }>;
       };
 
       const townTitle = worldName?.trim() || 'the community';
@@ -2340,6 +2348,15 @@ export function createSmallvilleApp(options: CreateAppOptions = {}) {
         culturalNorms && culturalNorms.length > 0
           ? `Prevailing Town Norms:\n${culturalNorms.map((n) => `- ${n.title} [${n.key}] (strength ${n.strength ?? 60}/100)`).join('\n')}`
           : '',
+        organizations && organizations.length > 0
+          ? `Resident-Created Organizations:\n${organizations.map((o) => `- [${o.id}] ${o.name} ($${o.treasury ?? 0} pool, ${o.memberCount ?? 1} members)${o.charter ? `: ${o.charter}` : ''}`).join('\n')}`
+          : '',
+        emergentNorms && emergentNorms.length > 0
+          ? `Emergent Free-Text Community Norms:\n${emergentNorms.map((n) => `- [${n.id}] "${n.statement}" (strength ${n.strength ?? 55}/100)`).join('\n')}`
+          : '',
+        customAssets && customAssets.length > 0
+          ? `Available Custom Resident Assets:\n${customAssets.map((a) => `- [${a.id}] ${a.name} ($${a.unitValue ?? 5})`).join('\n')}`
+          : '',
         `Relevant Private Memories:`,
         ...(agent.retrievedMemories ?? []).map(
           (m) => `- (${m.type}, imp=${m.importance}) ${m.description}`,
@@ -2372,6 +2389,7 @@ export function createSmallvilleApp(options: CreateAppOptions = {}) {
         `- "spread_rumor": share an unverified or strategic claim about a resident/business around town (specify targetAgentId, rumorClaim, optional isDeceptive: true/false, or rumorId to pass on an existing rumor).`,
         `- "fact_check": investigate Town Hall / library records to verify or debunk an active rumor (specify rumorId).`,
         `- "endorse_norm": publicly affirm a town cultural standard at Town Hall (specify normKey: "debt_honor"|"fair_pricing"|"mutual_aid"|"civic_duty"|"truthfulness").`,
+        `- "open_action": propose an open-ended civic, economic, cultural, or institutional initiative not limited to preset verbs (e.g. founding a mutual-aid fund, credit circle, newspaper, custom voucher, or new social norm; specify openIntent).`,
         `- "rest": take a restorative break at home.`,
         `- "adjust_goal": revise or add a concrete personal goal/ambition (specify newGoal or ambitionTitle).`,
       ]
@@ -2391,7 +2409,7 @@ export function createSmallvilleApp(options: CreateAppOptions = {}) {
           prompt,
           ...decDecoding,
           jsonContract: `{
-  "action": "work_shift" | "buy_item" | "consume_item" | "advance_project" | "post_notice" | "vote_proposal" | "vote_election" | "declare_candidacy" | "sign_petition" | "start_petition" | "propose_loan" | "transfer_money" | "launch_venture" | "socialize" | "seek_person" | "avoid_person" | "send_letter" | "propose_contract" | "file_dispute" | "form_coalition" | "join_coalition" | "call_boycott" | "spread_rumor" | "fact_check" | "endorse_norm" | "rest" | "adjust_goal",
+  "action": "work_shift" | "buy_item" | "consume_item" | "advance_project" | "post_notice" | "vote_proposal" | "vote_election" | "declare_candidacy" | "sign_petition" | "start_petition" | "propose_loan" | "transfer_money" | "launch_venture" | "socialize" | "seek_person" | "avoid_person" | "send_letter" | "propose_contract" | "file_dispute" | "form_coalition" | "join_coalition" | "call_boycott" | "spread_rumor" | "fact_check" | "endorse_norm" | "open_action" | "rest" | "adjust_goal",
   "reason": string,
   "locationId"?: string,
   "activity"?: string,
@@ -2431,6 +2449,7 @@ export function createSmallvilleApp(options: CreateAppOptions = {}) {
   "rumorClaim"?: string,
   "isDeceptive"?: boolean,
   "normKey"?: "debt_honor" | "fair_pricing" | "mutual_aid" | "civic_duty" | "truthfulness",
+  "openIntent"?: string,
   "newGoal"?: string
 }`,
           maxTokens: 950,
@@ -2477,6 +2496,7 @@ export function createSmallvilleApp(options: CreateAppOptions = {}) {
               rumorClaim: { type: Type.STRING },
               isDeceptive: { type: Type.BOOLEAN },
               normKey: { type: Type.STRING },
+              openIntent: { type: Type.STRING },
               newGoal: { type: Type.STRING },
             },
             required: ['action', 'reason'],
@@ -2490,6 +2510,144 @@ export function createSmallvilleApp(options: CreateAppOptions = {}) {
       res.json(norm);
     } catch (err) {
       handleApiError(res, err, 'decide');
+    } finally {
+      ctx.cleanup();
+    }
+  });
+
+  // 1e. Open Genesis Trial: Constrained Conservation Arbiter translating openIntent into atomic conserved ops
+  app.post('/api/world/arbitrate', async (req, res) => {
+    if (!isLlmConfigured()) {
+      res.status(503).json({ error: 'No LLM API key configured.' });
+      return;
+    }
+    const validationErr = validateArbitrateBody(req.body);
+    if (validationErr) {
+      res.status(400).json({ error: validationErr });
+      return;
+    }
+
+    const ctx = attachRequestAbort(req, res, 40_000);
+    try {
+      const {
+        agent,
+        openIntent,
+        simTimeLabel,
+        locations,
+        validAgentIds,
+        organizations,
+        emergentNorms,
+      } = req.body as {
+        agent: AgentContextPayload;
+        openIntent: string;
+        simTimeLabel: string;
+        locations: Array<{ id: string; name: string }>;
+        validAgentIds?: string[];
+        organizations?: Array<{ id: string; name: string; treasury?: number }>;
+        emergentNorms?: Array<{ id: string; statement: string }>;
+      };
+
+      const validLocIds = new Set(locations.map((l) => l.id));
+      const validAgIds = validAgentIds && validAgentIds.length > 0 ? new Set(validAgentIds) : undefined;
+      const prompt = [
+        `Time: ${simTimeLabel}`,
+        `Actor: ${agent.name} [${agent.id}] (${agent.occupation}) at ${agent.locationName}`,
+        `Actor wallet & constraints: respect strict conservation of money and physical presence.`,
+        `Proposed Open Initiative: "${openIntent}"`,
+        organizations && organizations.length > 0
+          ? `Active Organizations: ${organizations.map((o) => `${o.id}="${o.name}" ($${o.treasury ?? 0})`).join('; ')}`
+          : '',
+        emergentNorms && emergentNorms.length > 0
+          ? `Active Emergent Norms: ${emergentNorms.map((n) => `${n.id}="${n.statement}"`).join('; ')}`
+          : '',
+        `Valid Location IDs: ${locations.map((l) => l.id).join(', ')}`,
+        '',
+        `Translate this initiative into 1..3 strictly conserved atomic operations from:`,
+        `- create_org { op:"create_org", name, charter, roleTitle?, initialContribution? (0..150), duesAmount? (0..40), headquartersLocationId?, rule? }`,
+        `- join_org { op:"join_org", orgId, roleTitle?, contribution? (0..150) }`,
+        `- org_contribute { op:"org_contribute", orgId, amount (1..150), note? }`,
+        `- org_payout { op:"org_payout", orgId, toAgentId, amount (1..250), reason }`,
+        `- transfer_cash { op:"transfer_cash", fromId:"${agent.id}", toId, amount (1..250), note }`,
+        `- propose_norm { op:"propose_norm", statement }`,
+        `- adopt_or_challenge_norm { op:"adopt_or_challenge_norm", normId, adopt: boolean }`,
+        `- sanction_norm { op:"sanction_norm", normId, targetAgentId, reason }`,
+        `- create_asset { op:"create_asset", name, description, unitValue (1..100), quantity? (1..20), organizationId? }`,
+        `- trade_asset { op:"trade_asset", assetId, buyerId, price (1..200) }`,
+        `- publish_record { op:"publish_record", title, body, locationId? }`,
+        `- shift_relation { op:"shift_relation", targetAgentId, deltaTrust (-16..16), deltaAffection (-16..16), reason }`,
+      ]
+        .filter(Boolean)
+        .join('\n');
+
+      const raw = await generateStructuredJson<unknown>(
+        {
+          jobKind: 'decide',
+          agentId: agent.id,
+          preferStrong: true,
+          systemInstruction: `You are the Bostromia Conservation Arbiter. Compile a resident's open-ended social or economic initiative into legal, conserved atomic kernel operations. Never conjure cash or reference unknown entities.`,
+          prompt,
+          jsonContract: `{ "narrative": string, "ops": Array<{ "op": string, ... }> }`,
+          maxTokens: 700,
+          geminiSchema: {
+            type: Type.OBJECT,
+            properties: {
+              narrative: { type: Type.STRING },
+              ops: {
+                type: Type.ARRAY,
+                items: {
+                  type: Type.OBJECT,
+                  properties: {
+                    op: { type: Type.STRING },
+                    name: { type: Type.STRING },
+                    charter: { type: Type.STRING },
+                    statement: { type: Type.STRING },
+                    title: { type: Type.STRING },
+                    body: { type: Type.STRING },
+                    description: { type: Type.STRING },
+                    reason: { type: Type.STRING },
+                    note: { type: Type.STRING },
+                    fromId: { type: Type.STRING },
+                    toId: { type: Type.STRING },
+                    toAgentId: { type: Type.STRING },
+                    targetAgentId: { type: Type.STRING },
+                    orgId: { type: Type.STRING },
+                    normId: { type: Type.STRING },
+                    assetId: { type: Type.STRING },
+                    buyerId: { type: Type.STRING },
+                    headquartersLocationId: { type: Type.STRING },
+                    locationId: { type: Type.STRING },
+                    roleTitle: { type: Type.STRING },
+                    amount: { type: Type.INTEGER },
+                    initialContribution: { type: Type.INTEGER },
+                    duesAmount: { type: Type.INTEGER },
+                    contribution: { type: Type.INTEGER },
+                    unitValue: { type: Type.INTEGER },
+                    quantity: { type: Type.INTEGER },
+                    price: { type: Type.INTEGER },
+                    deltaTrust: { type: Type.INTEGER },
+                    deltaAffection: { type: Type.INTEGER },
+                    adopt: { type: Type.BOOLEAN },
+                  },
+                  required: ['op'],
+                },
+              },
+            },
+            required: ['narrative', 'ops'],
+          },
+        },
+        ctx.signal,
+        ctx.deadlineAtMs,
+      );
+
+      const obj = raw && typeof raw === 'object' ? (raw as Record<string, unknown>) : {};
+      const narrative =
+        typeof obj.narrative === 'string' && obj.narrative.trim()
+          ? obj.narrative.trim().slice(0, 220)
+          : openIntent.slice(0, 200);
+      const ops = normalizeOpenActionOps(obj.ops, validAgIds, validLocIds);
+      res.json({ narrative, ops });
+    } catch (err) {
+      handleApiError(res, err, 'arbitrate');
     } finally {
       ctx.cleanup();
     }

@@ -34,11 +34,15 @@ import { formatSimTime } from './memory';
 import { createMockLlm } from './mockLlm';
 import { PAPER_BENCHMARKS } from './paperExperiment';
 import { computeDiversitySnapshot } from './diversityMetrics';
+import { makeIdAllocator } from './ids';
+import { triggerTownShock } from './powerAndInstitutions';
 import {
   DEFAULT_ABLATIONS,
   type AblationSettings,
   type DiversitySnapshot,
+  type GenesisMode,
   type ScenarioId,
+  type TownShockKind,
   type WorldState,
 } from './types';
 import { validateWorld } from './validateWorld';
@@ -58,6 +62,8 @@ export interface HeadlessOptions {
   selectedAgentId?: string;
   scenario?: ScenarioId;
   ablations?: Partial<AblationSettings>;
+  genesisMode?: GenesisMode;
+  injectShockOnDay?: { day: number; kind: TownShockKind };
 }
 
 export interface HeadlessDayMetrics {
@@ -271,6 +277,11 @@ export function runHeadless(rawOptions: HeadlessOptions): HeadlessResult {
   };
 
   let world = createInitialWorldState(scenarioId, ablations);
+  if (rawOptions.genesisMode) {
+    world = { ...world, genesisMode: rawOptions.genesisMode };
+  }
+  const injectShockOnDay = rawOptions.injectShockOnDay;
+  let shockInjected = false;
   const startSimMinutes = world.simMinutes;
   const startDay = formatSimTime(startSimMinutes).day;
 
@@ -638,6 +649,13 @@ export function runHeadless(rawOptions: HeadlessOptions): HeadlessResult {
     dayEntry.uniqueConversationPairs = pairSet.size;
 
     // Check 03:00 home occupancy once per night when passing 03:00 (minuteOfDay === 180)
+    if (injectShockOnDay && !shockInjected && currentTime.day >= injectShockOnDay.day) {
+      const allocShock = makeIdAllocator((world.idSeq ?? 100) + 700);
+      const shockRes = triggerTownShock(world, injectShockOnDay.kind, allocShock.next, 3);
+      world = { ...shockRes.world, idSeq: Math.max(world.idSeq ?? 0, allocShock.seq()) };
+      shockInjected = true;
+    }
+
     const curMinFloor = Math.floor(world.simMinutes);
     if (curMinFloor > lastMinuteChecked) {
       for (let m = lastMinuteChecked + 1; m <= curMinFloor; m++) {

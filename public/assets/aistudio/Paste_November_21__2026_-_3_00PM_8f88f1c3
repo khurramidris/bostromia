@@ -1,0 +1,624 @@
+Smallville Generative Agents — Deep Audit & AI Studio Improvement Plan
+Nov 21, 2026 · @Khurram
+How to use this plan
+Give AI Studio one phase per message, in order. One giant prompt makes a coding agent skip or half-finish steps.
+1.  Back up. Download the app as a ZIP before you start and before each phase, so you can roll back.
+2.  Send the Master brief first. It tells the agent what the app is and which rules hold for every phase.
+3.  Send one phase prompt per message, Phase 0 to Phase 8. Copy the whole grey code block for that phase.
+4.  Check before moving on. Phase 0 adds a Diagnostics tab that simulates several days with a fake LLM in seconds. Run it after every phase and compare the numbers with the Target metrics section. If you run the code on your own machine, also run npm test.
+5.  When a check fails, reply: "Stop. Re-read the Phase N prompt and the Master brief. List the acceptance checks that fail, then fix only those."
+6.  Keep the order. Later phases depend on earlier ones; for example, Phase 5's meeting agreements need Phase 3's dated schedules. One exception: if the app is shared publicly, do Phase 2 (server security and cost caps) straight after Phase 0.
+Phases 0 to 3 are the core and give the biggest gains. Phases 4 to 7 make the simulation behave like the Stanford paper. Phase 8 is polish.
+Executive summary
+The app is a polished simulator wrapped around a thinking loop that barely runs. At normal speed the town gets about 5 LLM conversations per simulated day; at 2x or 5x it gets none.
+It is a Google AI Studio app (React and Vite in the browser, an Express server.ts) that recreates Stanford's Smallville with 18 residents on an 80×46 tile map. A pure TypeScript engine moves residents and tracks their needs, mood and memories. An LLM writes dialogue, reflections, daily plans and overnight memory summaries. The default is OpenRouter's free Nemotron model; Gemini is used if no OpenRouter key is set.
+The biggest problems, all measured on the project's own code:
+• One LLM job at a time. The app starts at most one job every 14 seconds and runs reflections before conversations. About 120 pairs a day qualify to talk; 5 conversations happen. 58% of LLM input tokens go to reflections.
+• Memory is mostly noise. Each resident logs about 101 "who is in the room" notes a day. With the LLM off, they fill 92% of memory. The 65-item cap then deletes important memories; Isabella's party plan (importance 9) is gone by Day 3.
+• The headline result is scripted. 17 of 18 residents have the Valentine's party written into their starting schedules. With no LLM at all, 16 of 18 attend every day.
+• Time and sleep are broken. Schedules carry no date, so one-day detours repeat on later days and "tomorrow" meetings land on the wrong day. Nobody has a sleep block; by Day 4 at 3 AM, 7 of 18 residents are out of their homes.
+• The server is open. Anyone with the app's address can overwrite the one shared save and spend your API key. The default free model allows 50 requests a day, under one simulated day of current traffic.
+In this plan, "better" means numbers you can check in a new Diagnostics tab. Targets: at least 40 conversations per simulated day, every morning plan done before 8 AM, and noise under half of memory. Important memories must survive 7 days, and party attendance must come only from invitations. The plan also reports diffusion, attendance and network density next to the Stanford paper's results.
+How the app works today
+The engine is fast, about 0.15 ms per tick. The slow part is the single-lane job picker, which spends most of its turns on reflections.
+The app is about 11,000 lines of TypeScript:
+File
+What it does
+Lines
+src/simulation/seedAgents.ts
+18 residents, 126 schedule blocks, 4 rumours
+1,383
+src/App.tsx
+Tick loop, job picker, LLM handlers, saving
+1,197
+server.ts
+7 LLM routes, world save, OpenRouter or Gemini
+1,148
+src/simulation/engine.ts
+stepWorldState() and the apply*Result() functions
+1,089
+src/simulation/mapData.ts
+80×46 tiles, 14 buildings, 32 objects
+763
+src/simulation/memory.ts
+Retrieval scoring, memory cap, importance
+388
+src/services/smallvilleApi.ts
+Picks memories, builds payloads, calls the server
+358
+src/simulation/psychology.ts
+Needs, mood, the System-1/System-2 talk gate
+330
+src/simulation/llmJson.ts
+Parses and clamps model replies
+302
+src/components/
+Map canvas, inspector, chronicle, society and architecture views
+~2,700
+What is good and must be preserved
+Keep the engine design, the private per-speaker dialogue prompts and the JSON handling; every phase builds on them.
+• A pure, fast engine. stepWorldState() takes a world and returns a new one with no side effects, at about 0.15 ms per tick. That is why every measurement in this doc could run headless, and why the Diagnostics tab is cheap to build.
+• Private dialogue prompts. Each speaker is prompted separately with only its own memories plus what was said aloud. I checked the captured prompts: Maria's private plan text never appears in Isabella's prompt. Most Smallville clones use one all-knowing prompt for both sides.
+• Robust LLM parsing. safeParseJson survives reasoning tags, code fences and extra prose; every number from the model is clamped; Gemini calls use a response schema.
+• Clean world data. A validator over all 18 residents, 14 buildings and 32 objects found no broken references, no doors on walls and no objects reachable only from outside their building.
+• Bounded storage. Caps on memories, chronicle and conversations keep a 7-day save near 614 KB.
+• Good inspection tools. The inspector shows each memory's recency, importance and relevance scores. The interview, whisper and announce tools, Chronicle and Society views make the simulation explainable. The map canvas draws from a cached background at about 30 frames a second without going through React.
+• A working test base. 12 node:test tests pass, and tsc reports no errors.
+Audit findings
+I found 30 problems. The 5 critical ones (one only if the app is shared) sit in the job scheduler, the memory store, the scripted party and the open server. Every row was measured on the project's own code (method in the Appendix). "Phase" is the prompt that fixes it.
+#
+Area
+Finding
+Evidence (measured)
+Severity
+Phase
+1
+Cognition
+One LLM job at a time, a new one at most every 14 s; reflections outrank conversations
+1x: 5.3 conversations per sim day vs ~120 qualifying pairs; 2x and 5x: 0 in 4 days; 58% of input tokens go to reflections
+Critical
+1
+2
+Cognition
+One failing call blocks everyone
+First resident's plan call fails: 0 of 18 morning plans on Days 2–4, 49 retries a day
+High
+1
+3
+Cognition
+Morning plans arrive late
+At 1x the last plan lands ~12:20; at 5x only 9–10 of 18 residents get one
+High
+1
+4
+Cognition
+Residents freeze while the model thinks; results are stamped at reply time
+A 3-call talk at 4 s per call freezes both ~18 sim-min at 1x, ~92 at 5x
+Medium
+1
+5
+Cognition
+Overnight consolidation only for the resident selected in the UI
+One per night, always the selected one
+Medium
+1
+6
+Memory
+Room-presence notes flood memory
+101 per resident per day; 92% of stored memories with the LLM off
+Critical
+4
+7
+Memory
+The 65-item cap deletes important memories
+Isabella's importance-9 party plan gone by Day 3; 73 Day-1 memories left across 18 residents after 7 days
+Critical
+4
+8
+Memory
+Observation importance is a 4–7 novelty score, not a 1–10 rating
+"A fire broke out in the bakery" and "walked past a bench" both score 7
+High
+4
+9
+Memory
+Duplicate memory IDs
+16 of 18 residents, 89 duplicated IDs after 3 days
+High
+0
+10
+Memory
+Embedded and non-embedded memories are scored on different scales
+An unrelated embedded memory (0.40) outranks a relevant one without an embedding (0.22)
+High
+4
+11
+Memory
+Embeddings can't keep up; none at all without a Gemini key
+10 texts per 22 s vs ~1,800 new memories a day; "celebration" vs "party" scores 0
+Medium
+4
+12
+Memory
+lastAccessed is never updated
+Recency decays from creation; the paper decays from last retrieval
+Medium
+4
+13
+Reflection
+One prompt; its questions never drive retrieval; evidence never checked
+A made-up evidence ID was stored as-is
+High
+6
+14
+Planning
+No "react to what I see" step
+Plans change only through talks and whispers
+High
+6
+15
+Schedules
+Blocks carry no date
+8 one-day detours re-fired on later days within 3 days; a 10 AM "tomorrow" meeting saved as today's 10:00
+High
+3
+16
+Schedules
+Re-plans erase commitments
+Mid-day replan keeps only past blocks; morning plan replaces the whole day
+High
+3
+17
+World
+No sleep; after midnight residents walk to their 8 AM place
+At home at 3 AM: 15, 13, 11 of 18 on Days 2–4; 3 at Hobbs Cafe; 11 of 18 live at their workplace
+Medium
+3
+18
+World
+Substring rules
+"forest", "interest", "breakfast" count as resting; "run" in "brunch" spreads the mayor rumour
+Medium
+3
+19
+World
+Location goes stale outdoors; rare talks through a wall
+5.2% of time outdoors, all showing the last building; 0.3% of pairs span inside and outside
+Low
+3
+20
+Dialogue
+Fixed 3 turns; B summarizes before the end; A's importance reused for B
+Maria's memory of the talk got Isabella's rating (6)
+Medium
+5
+21
+Dialogue
+Partner's private plan steers recall; fixed words in queries
+Changing only Maria's private plan changed 2 of Isabella's 8 recalled memories; "party mayor town" in every talk query
+Medium
+5
+22
+Dialogue
+One-sided commitments; time limits disagree
+Maria's meeting created no block for Isabella; parser allows 23:30, engine drops anything after 22:30
+Medium
+5
+23
+Emergence
+Party attendance is scripted
+17 of 18 have a Hobbs Cafe block 16:00–17:30; with no LLM, 16 of 18 attend every day
+Critical
+7
+24
+Emergence
+Rumour spread counted by keyword substrings; no new rumours; no paper metrics
+Society view percentages can't be trusted
+High
+7
+25
+Server
+Open API and one shared save
+Anyone with the URL can read, overwrite or delete the save and spend your key
+Critical if shared
+2
+26
+Server
+Default free-model caps
+OpenRouter :free: 20 requests/min, 50/day (1,000 after buying ≥ 10 credits); today's traffic is 77 calls per sim day
+High
+2
+27
+Server
+No JSON repair; timeout mismatch
+A non-JSON reply kills the talk after 1 call; client quits at 75 s, server can keep calling ~5 min
+Medium
+2
+28
+Tooling
+npm install fails; README names the wrong env file; no test script
+ERESOLVE on esbuild; a key in .env.local is ignored
+Medium
+0
+29
+Tests
+Only the pure engine is tested
+No tests for scheduling, server routes or multi-day behaviour
+Medium
+0
+30
+UI
+Whole app re-renders 10 times a second; misleading counter
+Inspector ~4.7 ms per render; "LLM Calls Saved" shows 1,886 vs 38 real talks
+Low
+8
+Target metrics
+A phase is done when its rows below pass in the Diagnostics tab. Unless a row says otherwise, run 4 sim days with the fake LLM at 4 s per call, 1x speed and the Balanced budget.
+Metric
+Today (measured)
+Target
+Phase
+Conversations per sim day at 1x
+5.3
+≥ 40
+1
+Conversations per sim day at 5x
+0
+≥ 20, with the clock slowed while agents think
+1
+Residents with a morning plan before 08:00
+About 6 of 18 (the last lands ~12:20)
+18 of 18
+1
+Morning plans when one resident's plan call always fails
+0 of 18
+≥ 17 of 18, plus a fallback day for the failing one
+1
+Residents whose memories are consolidated each night
+1
+≥ 16 of 18
+1
+Reflections per resident per day
+~2.3, triggered by noise
+1.5–3, never more than 3
+1, 6
+Share of stored memories that are room-presence notes
+92% (LLM off)
+≤ 50%
+4
+Observation memories per resident per day
+~101
+≤ 30
+4
+Seed memories of importance ≥ 8 still present, or cited by a summary, after 7 days
+No: party plan lost by Day 3
+All of them
+4
+Duplicate memory IDs
+89
+0
+0
+Residents at home at 3 AM on Day 4
+11 of 18
+≥ 17 of 18
+3
+One-day detours that repeat on a later day
+8 in 3 days
+0
+3
+Party attendance with the LLM off
+16 of 18, every day
+1 (Isabella), party day only
+7
+LLM calls per conversation
+Always 3
+4 to 8 (2–6 spoken turns + 2 wrap-up calls)
+5
+Party news reach after 2 sim days, real LLM
+Can't be measured
+Measured; paper: 13 of 25 (52%)
+7
+Invited residents who attend, real LLM
+Not tracked
+Measured; paper: 5 of 12
+7
+Network density, real LLM
+Not tracked
+Measured; paper: 0.167 to 0.74
+7
+Overwriting another user's world through the API
+Possible
+Impossible
+2
+npm install and npm test
+Install fails; no test script
+Both pass
+0
+React re-renders per second while playing
+~10
+≤ 5
+8
+Master brief (paste first)
+Send this as your first message in AI Studio. It gives the agent the context and the rules every phase depends on.
+You are improving "Smallville — Generative Agents", the app in this AI Studio project. It simulates 18 LLM-driven residents on an 80x46 tile map, modelled on Park et al. 2023, "Generative Agents: Interactive Simulacra of Human Behavior" (UIST '23).
+
+I will send the work as Phases 0 to 8. Do only the phase I send, then stop and report.
+
+How the app works now (keep this structure):
+- src/simulation/ is a pure engine. engine.ts: stepWorldState() advances the world each tick; applyConversationResult(), applyReflectionResult() and applyConsolidationResult() merge LLM results. memory.ts: retrieval scoring and memory caps. psychology.ts: drives, mood and the System-1/System-2 encounter gate. pathfinding.ts: A*. seedAgents.ts and mapData.ts: residents, schedules, rumours ("memes"), buildings and objects. llmJson.ts: safeParseJson() and normalizers for model output. simulation.test.ts: node:test tests.
+- src/App.tsx runs a 100 ms tick loop, decides which LLM job to start, and calls src/services/smallvilleApi.ts, which POSTs to server.ts (/api/agent/converse, /reflect, /plan, /interview, /whisper, /consolidate, /embed, and /api/world for saves).
+- server.ts calls OpenRouter when OPENROUTER_API_KEY is set, otherwise Gemini (GEMINI_API_KEY, which AI Studio injects). Embeddings use gemini-embedding-2.
+
+What an audit measured (each phase gives details): only one LLM job runs at a time and reflections go first, so a sim day gets about 5 conversations; memory is mostly "who is in the room" notes, and a 65-item cap deletes important memories; schedules have no dates and nobody sleeps; the Valentine's party is written into 17 residents' starting schedules; the API has no auth and one shared save file.
+
+Rules for every phase:
+1. Keep src/simulation/ pure: no React, no fetch, no Date.now(), no Math.random(). Pass time, IDs and random seeds in as arguments. New simulation logic goes there, not into components.
+2. Keep API keys on the server. Never call LLM or embedding APIs from the browser.
+3. Keep what works: the map canvas, Agent Inspector, Chronicle, Society and Architecture views, interview/whisper/announce, the separate per-speaker conversation prompts, safeParseJson and the llmJson normalizers.
+4. Don't remove lines marked "Do not remove" in vite.config.ts.
+5. Every behaviour change gets a node:test unit test in src/simulation/*.test.ts (or src/server/*.test.ts for server code). From Phase 0 on, the Diagnostics headless run must keep working.
+6. After each phase, run npm run lint, npm test and npm run build, and fix what fails. Change an existing test only when the phase replaces the behaviour it checks, and tell me which.
+7. When the saved-world shape changes, bump WORLD_SCHEMA_VERSION and add a migration. An old save must never crash the app: fall back to a fresh town and show a notice.
+8. Add no npm dependencies unless the phase allows it.
+9. Apply every async LLM result to the latest world state (read it again after the await), never to a copy taken before the call.
+10. End each phase with a short report: files changed, tests added, how I can check it in the UI, and anything you could not do.
+11. If the code doesn't match what a phase describes, stop and tell me instead of rewriting large parts on your own.
+
+Reply only "Ready for Phase 0".
+Phase 0: Foundation, diagnostics and a baseline
+This phase fixes install and testing, removes duplicate memory IDs, and adds the Diagnostics tab that every later phase is checked with. The simulation's behaviour does not change yet.
+Phase 0 — Foundation, diagnostics and a measurable baseline. Follow the Master brief rules.
+
+Goal: the project installs and tests cleanly, memory IDs are unique, and a headless Diagnostics harness measures several sim days with a fake LLM. Apart from the ID fix, do not change how the simulation behaves.
+
+1. Install and run fixes
+   a. package.json: remove the devDependency "esbuild". Nothing imports it, and its ^0.25 range conflicts with Vite 8, so `npm install` fails with ERESOLVE. (Verified: without it, install, lint, build and tests all pass.)
+   b. package.json: add "test": "tsx --test \"src/**/*.test.ts\"".
+   c. server.ts: replace `import 'dotenv/config'` with `dotenv.config({ path: ['.env.local', '.env'], quiet: true })`, so a key in .env.local (as the README says) is read. The first file wins.
+   d. README: document GEMINI_API_KEY (injected by AI Studio), optional OPENROUTER_API_KEY and OPENROUTER_MODEL, `npm test`, and the Diagnostics tab.
+
+2. Unique, deterministic IDs
+   - Add `idSeq: number` to WorldState and create src/simulation/ids.ts with an allocator, e.g. makeIdAllocator(seq) -> { next(prefix): string, seq(): number }. Use it inside stepWorldState, every apply*Result function, and the App handlers that create memories or chronicle events (replan, interview, whisper, broadcast). Store the final seq back on the world.
+   - Replace every Math.random() in IDs, and every ID built only from Math.round(simMinutes) (perc_, urge_, mem_, conv_, plan_, refl_, cons_, int_, whisp_, bcast_, chr_...). Keep the readable prefixes.
+   - Why: after 3 sim days, 16 of 18 residents have duplicate memory IDs (89 in total). That breaks React keys, the embedding cache, pruning by ID and reflection evidence links.
+
+3. Move logic out of App.tsx into pure functions (same behaviour as today)
+   - src/simulation/cognitionPolicy.ts: pickAutoJob(world, triggers, policyState, nowMs, selectedAgentId) returning { job | null, policyState }. It must reproduce today's rules exactly: one job in flight; a new start only when nowMs - lastStartMs > 14000; order: consolidation (from 22:30, once per day, for the selected agent) > morning plan > reflection > conversation. App.tsx uses it.
+   - engine.ts: applyPlanResult(world, agentId, payload, { isMorningPlan }) holding the merge logic that is now inside handleReplan; also applyInterviewResult, applyWhisperResult and applyBroadcast for the logic now in App.tsx. App.tsx uses them.
+
+4. Fake LLM and headless runner
+   - src/simulation/mockLlm.ts: deterministic fake replies for converse, reflect, plan, consolidate, interview and whisper that pass the llmJson normalizers. Plan replies reuse the resident's seed routine with small seeded variations. Options: seed, failAgentIds (calls for these residents always fail), failureRate.
+   - src/simulation/headless.ts: runHeadless({ days, speed, latencyMs, failAgentIds, seed }). Advance a virtual clock exactly like the tick loop: 100 ms ticks, sim minutes per tick = 100/650 x speed. Use pickAutoJob and the same apply functions as the App. Simulate model latency on the virtual clock: a job finishes latencyMs x its number of LLM calls after it starts (a conversation is 3 calls).
+   - For each sim day, return: conversations, reflections, morning plans (residents planned, and the sim time the last one finished), consolidations, unique conversation pairs flagged, perception events, drive detours, and LLM calls by job type.
+   - At the end, return: memories per resident; share of memories that are room perceptions (perc_); duplicate memory IDs; whether each seed memory with importance >= 8 still exists; residents inside their home zone at 03:00 each night; and detours that fired again on a later day.
+   - src/simulation/validateWorld.ts: validateWorld(world) returns a list of issues: relationships or social edges pointing at unknown residents; schedule objectIds that don't exist or sit in another building; object approach tiles outside their building; door tiles that aren't walkable; duplicate memory IDs.
+
+5. Diagnostics tab
+   - Add "Diagnostics" to the TownHeader views with two buttons. "Validate world" lists the issues. "Run headless test" has inputs for days (1 to 7), speed (1, 2, 5), latency in ms, and a checkbox "make the first resident's plan calls fail".
+   - Run the test in a Web Worker (src/simulation/headless.worker.ts, created with new Worker(new URL('./headless.worker.ts', import.meta.url), { type: 'module' })). If a worker isn't practical, run it in chunks with setTimeout so the UI stays responsive.
+   - Show a table per day, the end-of-run checks, and a "Copy JSON" button.
+
+6. Tests
+   - headless.test.ts: a 2-day run finishes in under 10 s and returns every metric.
+   - validateWorld.test.ts: the seed world has no issues.
+   - ids.test.ts: no duplicate IDs after 3 sim days.
+
+Acceptance
+- npm install, npm run lint, npm run build and npm test all pass.
+- Diagnostics (4 days, 1x, 4000 ms) roughly reproduces the measured baseline: about 5 conversations a day, about 42 reflections a day, 18 morning plans with the last one landing around 12:00 to 13:00, 1 consolidation a night, and about 100 perception events per resident per day. With "first resident fails" checked: 0 morning plans on days 2 to 4. These numbers show the harness is faithful; Phase 1 fixes them. If your numbers differ by more than about 30%, explain why.
+- 0 duplicate memory IDs after 3 sim days.
+- Out of scope: scheduling, memory, prompts and the map.
+Phase 1: A fair, parallel job scheduler
+This is the biggest single gain. It replaces the one-job-every-14-seconds picker with a queue that runs several jobs at once, shares calls fairly, backs off on failures, and slows the clock when residents are waiting on the model.
+Phase 1 — Cognition scheduler v2. Follow the Master brief rules.
+
+Problem (measured with Diagnostics, 1x, 4 s per LLM call): about 120 resident pairs a day qualify to talk, but only about 5 conversations happen. One job runs at a time, a new one starts at most every 14 s, and reflections always go first (58% of input tokens go to reflections). At 2x and 5x there are 0 conversations in 4 days, and at 5x only half the residents get a morning plan. If one resident's plan call keeps failing, nobody else gets a morning plan (0 of 18 on days 2 to 4) and the call is retried about 49 times a day.
+
+Build src/simulation/cognitionScheduler.ts (pure) and make App.tsx and headless.ts use it instead of cognitionPolicy.ts.
+
+1. Jobs: { id, kind: 'morning_plan' | 'conversation' | 'reflection' | 'consolidation' | 'replan' | 'interview' | 'whisper', agentIds, expectedCalls, enqueuedAtMs, enqueuedAtSim, attempts }.
+2. Concurrency: up to config.maxConcurrent jobs in flight (default 3). A resident can be in at most one in-flight job. Remove App.tsx's global single-flight lock; "busy" now means one or more jobs in flight.
+3. Rate and budget: never exceed config.maxCallsPerMinute (default 20, counting each job's expected calls). Optional config.maxCallsPerSimDay. Fairness: subtract 10 priority points for each LLM call a resident has already used today, with a hard cap of 30 calls per resident per sim day. Presets: Thrifty (about 150 calls per sim day), Balanced (about 350), Research (about 600).
+4. Priority with aging (higher runs first):
+   - morning_plan 100: from 05:00 sim, for each resident not yet planned today.
+   - user actions 95 (interview, whisper, Re-plan, Reflect Now, Sleep Cycle): never dropped silently; show "queued".
+   - consolidation 70: once per resident per night, for ALL residents, not only the one selected in the UI. Use the window 22:30 to 03:00 until Phase 3 adds bedtimes.
+   - conversation 60: from the engine's triggers. When the job starts, re-check that both residents are still within talking distance and free; drop stale pairs.
+   - reflection 40: only if importanceAccumulator >= threshold, fewer than 3 reflections today, and at least 120 sim minutes since the resident's last one.
+   - Aging: +1 point per sim minute a job has waited.
+5. Failures: back off per (kind, resident). Retry after 15 s, 30 s, 60 s and so on, up to 5 min of real time, while other jobs keep running (no head-of-line blocking). After 3 failed morning plans, apply a fallback day (the resident's routine blocks moved to today) and mark the resident planned. After 3 failed reflections, halve the resident's accumulator. List failures in the UI, not only in the red banner.
+6. Time dilation (config.timeDilation, on by default): count the due work — morning plans for residents whose first block starts within 60 sim minutes, conversations in progress, and queued conversations whose pair is still in range. When free lanes can't cover it, slow the sim clock by rate = clamp(freeLanes / dueJobs, 0.1, 1). Show "Slowed for thinking x0.4" in the header.
+7. Conversations take sim time: when a conversation job starts, set inConversationWith and conversationStartedAtSim on both residents; they stop walking and face each other. Stamp the result at conversationStartedAtSim + turns x 1.5 sim minutes, not at the moment the HTTP reply arrives.
+8. Rate-limit replies (429 or quota errors): pause only that job type, show a countdown, and resume automatically. Don't switch auto-cognition off globally.
+9. Settings (in the Architecture view or a new Cognition panel): preset, maxConcurrent, calls per minute, time dilation on or off.
+
+Tests (cognitionScheduler.test.ts): no resident in two jobs; priorities and aging; backoff timing; fallback plan after 3 failures; calls per minute respected; stale conversation pairs dropped; consolidation doesn't depend on the selected resident.
+
+Acceptance (Diagnostics, fake LLM at 4 s per call, Balanced):
+- 1x, 4 days: at least 40 conversations per sim day; all 18 morning plans done before 08:00 sim every day; 1 to 3 reflections per resident per day; consolidation for at least 16 of 18 residents every night.
+- 5x with time dilation on: at least 20 conversations per sim day; all morning plans before 08:00.
+- "First resident fails": the other 17 get plans every day; the failing one gets a fallback after 3 attempts and causes at most 3 failed calls a day.
+- Never more than maxConcurrent jobs in flight, and never more than maxCallsPerMinute calls in any minute.
+Phase 2: Server safety, cost limits and per-user saves
+This closes the open API, caps spending, gives each browser its own town, and makes model calls fail safely. If the app is shared publicly, run this phase straight after Phase 0.
+Phase 2 — Server safety, cost limits and per-user saves. Follow the Master brief rules.
+
+Problem: every /api route is open. Anyone with the app's address can read, overwrite or delete the single shared save (.smallville-world.json) and spend your LLM key; when an AI Studio app is shared or deployed to Cloud Run, all users' calls run on your key. Every visitor shares one save file, so tabs overwrite each other and a visitor can load someone else's town; AI Studio's docs also say built-in storage isn't supported yet. The default model is an OpenRouter ':free' model, limited to 20 requests a minute and 50 a day (1,000 a day once you have bought at least 10 credits). Today's traffic is about 77 calls per sim day, and Phase 1 raises it. A reply that isn't valid JSON fails the whole conversation with no retry. The browser gives up at 75 s while the server can keep calling the model for about 5 minutes (3 calls in a row, each up to 3 attempts of 32 s).
+
+1. Provider settings: env LLM_PROVIDER = auto | gemini | openrouter. 'auto' keeps today's rule (OpenRouter if OPENROUTER_API_KEY is set, else Gemini). GEMINI_MODEL env (default 'gemini-4-hydrogen'); optional per-job overrides MODEL_CONVERSE, MODEL_REFLECT and MODEL_PLAN. /api/health reports provider, models, limits and today's usage. If the OpenRouter model ends in ':free', show a warning with its daily limit in the UI.
+2. Per-user worlds: the browser creates a worldId (crypto.randomUUID()), keeps it in localStorage and sends it as header x-world-id. Server saves are off by default (ENABLE_SERVER_SAVES=false). When on, store data/worlds/<uuid>.json, check the UUID format (no path traversal), and only ever serve a world to the worldId that wrote it. Remove the startup step that replaces the browser's town with a newer server save.
+3. Browser saves: move the world snapshot from localStorage to IndexedDB (keep localStorage as a fallback). Add "Export world" (JSON download) and "Import world" buttons. Embeddings stay out of the snapshot.
+4. Abuse and cost limits, with no new dependencies:
+   - Token-bucket rate limiter per IP and per worldId on /api/agent/*: default 30 requests a minute, burst 10. Reply 429 with Retry-After.
+   - Daily cap MAX_LLM_CALLS_PER_DAY (default 2000), counted per upstream call including retries. Reply 429 "daily budget reached"; the client pauses auto-cognition and says why.
+   - Optional APP_ACCESS_TOKEN: when set, every /api request must send x-app-token. The UI asks for it once and stores it.
+   - Body limits: 300 KB for /api/agent/*, 5 MB for /api/world. Validate each body by hand (types, arrays of at most 40 items, strings of at most 600 characters, IDs matching expected patterns) and reply 400 on failure. Put validators in src/server/validate.ts.
+5. Reliability:
+   - Per upstream call: a 25 s timeout and at most 1 retry for timeouts, 5xx or 429 (honour Retry-After). If the reply isn't valid JSON, make one repair call that adds: "Your last reply was not valid JSON. Reply with only the JSON object."
+   - Each route gets a total deadline (converse 60 s, others 40 s). The browser timeout is the deadline + 10 s.
+   - Abort upstream calls when the browser disconnects (req.on('close') -> AbortController).
+   - For OpenRouter reasoning models, limit or exclude reasoning with OpenRouter's reasoning request option, so long reasoning can't use up max_tokens and cut off the JSON.
+6. Metrics: /api/metrics returns, per job type: calls, failures, p50 and p95 latency, and input and output tokens (from the provider's usage fields). Log one structured line per upstream call.
+7. README: costs and limits, the free-model daily cap, the fact that OpenRouter's free NVIDIA endpoint logs prompts, and how to set these env vars in AI Studio's Secrets panel.
+
+Tests (src/server/*.test.ts, with a fake fetch): validators reject bad bodies; the rate limiter's bucket math; a non-JSON reply triggers exactly one repair call; the daily cap returns 429; worldId isolation.
+
+Acceptance:
+- POST or DELETE /api/world without x-world-id returns 400. With server saves off, they do nothing. Two worldIds never see each other's data.
+- The 31st /api/agent request within a minute from one IP returns 429. With MAX_LLM_CALLS_PER_DAY=5, the 6th call returns 429 and the UI shows "daily budget reached" without crashing.
+- Invalid bodies return 400. A non-JSON model reply gets one repair attempt, then a clear 502.
+- In AI Studio with no OpenRouter key, /api/health shows provider "gemini".
+Phase 3: Dated schedules, sleep and a believable world
+This gives every plan a date, puts residents to bed, keeps agreed meetings through re-plans, and replaces word-matching shortcuts with explicit activity types.
+Phase 3 — Dated schedules, sleep and a more believable world. Follow the Master brief rules.
+
+Problem (measured, LLM off): schedule blocks are minutes-of-day with no date, so they repeat every day. One-day hunger and rest detours fired again on later days 8 times in 3 days. A commitment made at 15:00 for "10:00 tomorrow" is stored as today's minute 600. A mid-day re-plan keeps only past blocks, so future commitments vanish, and a morning plan replaces the whole day. No resident has a sleep block: after midnight they walk to their 08:00 place, so at 03:00 only 15, 13 and 11 of 18 are home on days 2 to 4 (others are in the park, at Town Hall or at Hobbs Cafe). Energy refills between 22:00 and 06:00 wherever they stand. Resting is detected by the substrings 'rest', 'break' and 'relax', so "forest", "interest" and "breakfast" count as rest. While residents walk outdoors (5% of the time), currentLocationId still names the last building.
+
+1. Types: ScheduleBlock gets day: number; kind: 'sleep' | 'meal' | 'work' | 'social' | 'errand' | 'leisure' | 'rest' | 'travel'; fixed?: boolean (agreed meetings); and oneOff?: boolean (single events).
+2. getActiveScheduleBlock(schedule, day, minuteOfDay) looks only at the current day's blocks. Before the first block: a synthetic "Sleeping" block at home (kind sleep) until wake time. After the last block ends: walk home, then sleep.
+3. Day rollover at 00:00: drop past days' blocks. If a resident has no plan for the new day yet, copy its routine (seed blocks that aren't oneOff) into the new day, so nobody idles while waiting for a morning plan.
+4. Seeds: add wake and sleep times for every resident (e.g. sleep 22:30 to 06:30 at home), give every seed block a kind, and mark one-time Day 1 events (the Valentine's party set-up and attendance) oneOff. 11 of 18 residents live in a public building (the college, cafe, pub, clinic, library, workshop, bakery or Town Hall). Keep that, but add a bed object inside each of those buildings and sleep there; the college bed area is the students' dorm. Update the object-count test.
+5. Drives follow kinds, not words: energy refills only during sleep or rest blocks while the resident is at that block's place. Hunger refills only during meal blocks at a food place (cafe, pub, bakery or home). Drive detours are oneOff blocks for today, removed when finished. No hunger detours while asleep; schedule breakfast instead.
+6. Commitments: store an absolute { day, minuteOfDay }. Use one shared constant for the allowed window (e.g. 06:00 to 22:30) in both llmJson.normalizeCommitment and the engine; today the parser allows 23:30 but the engine silently drops anything after 22:30. Reject times already past; allow tomorrow. Re-plans and morning plans keep every future fixed block, and the engine re-inserts any that a model reply leaves out.
+7. Location: currentLocationId becomes string | null (null outdoors), plus currentAreaLabel for the UI (e.g. "Main Street"). Room perception and the "Here now" list use the real zone.
+8. Talking range: a pair may talk only if both are in the same zone, or both are outdoors with no wall tile on the straight line between them (Bresenham over tiles), within 2.4 tiles.
+9. Rumour keywords: match whole words or whole phrases after tokenizing, not substrings (today "run" in "brunch" spreads the mayor rumour).
+
+Tests: a detour never fires on a later day; a commitment for tomorrow fires only tomorrow; a past commitment is rejected; a replan keeps fixed blocks; "Walking the forest trail" doesn't refill energy and sleeping does; walking outdoors sets currentLocationId to null; no conversation across a wall; an old (schema v1) save migrates.
+
+Acceptance (Diagnostics, LLM off, 4 days): at least 17 of 18 residents at home at 03:00 every night; 0 detours repeating on a later day; 0 conversation pairs across a wall or between a building and the street; validateWorld reports nothing; the Day 1 party blocks don't appear on Day 2.
+Phase 4: Memory that keeps what matters
+This cuts room-presence noise, rates importance on a real 1–10 scale, forgets safely, and scores every memory's relevance on the same scale.
+Phase 4 — Memory v2: less noise, real importance, safe forgetting, one retrieval scale. Follow the Master brief rules.
+
+Problem (measured): each resident logs about 101 "who is in the room" notes per sim day. With the LLM off they make up 92% of stored memories; with it on, the 65 slots end up roughly half these notes and half reflections about them. Observation importance is a novelty score fixed to 4 to 7: "A fire broke out in the bakery and Mateo was hurt" and "Walked past a bench" both score 7. The 65-item cap fills within a day and then drops the oldest protected memories: Isabella's importance-9 party plan is gone by Day 3, and after 7 days only 73 Day-1 memories remain across all 18 residents. lastAccessed is never updated, so recency decays from creation, while the paper decays from last retrieval. With partial embedding coverage, (cos+1)/2 maps "unrelated" to 0.5, so an unrelated embedded memory gets relevance 0.40 and beats a relevant memory without an embedding (0.22). Background embedding (10 texts every 22 s) can't keep up with about 1,800 new memories a day.
+
+1. Perception (engine.ts): create one observation when a resident enters a zone ("At Hobbs Cafe: Maria serving lattes, John reading"). While the resident stays, update that same memory (newcomers, notable activity changes, a new object trace) instead of adding new ones, and close it on leaving. Add a separate memory only for salient events: someone the resident has a social edge with arrives, a broadcast, an object changed by someone else, a conversation. Target: at most 30 observation memories per resident per sim day.
+2. Importance on a 1 to 10 scale (memory.ts scoreImportance): base by kind (arrival 2, routine perception 2, meeting a known person 4, broadcast 8, plan 5 to 7, conversation = that participant's own model rating), plus 0 to 2 for novelty, plus 3 for salient words (fire, hurt, injured, accident, hospital, proposal, fight, award, election, invitation, party, wedding, death...), capped at 10. Optional "Paper mode": the model scores new memories in batches of 20 per resident, through the Phase 1 scheduler and budget.
+3. Retention (replace compactMemories): configurable cap per resident, default 300. retainScore = importance/10 + 0.5 x recency + type bonus (reflection 0.3, consolidated 0.5, plan tied to a future fixed block 1.0) + 0.1 x times cited. Never evict a memory with importance >= 8 that is less than 7 sim days old. Before evicting routine observations older than 24 sim hours, compress each resident-day of them into one 'consolidated' summary memory that cites their IDs (rule-based, no LLM), so nothing disappears without a trace.
+4. Access: when memories go into an LLM prompt (conversation, plan, reflection, interview, whisper), set their lastAccessed to the current sim time with markAccessed(world, agentId, ids, simMinutes). The Inspector's probe stays read-only.
+5. One relevance scale: if at least 90% of the candidate memories and the query have embeddings of the same size, relevance = 0.8 x min-max-scaled cosine + 0.2 x lexical. Otherwise use lexical for all candidates. Remove the (cos+1)/2 mapping.
+6. Embeddings (only when GEMINI_API_KEY is set): embed every new memory when it is written, through a client queue (batches of up to 32, at most one request every 3 s, counted in the Phase 1 budget). Google recommends task prefixes for text-only gemini-embedding-2: send queries as "task: search result | query: {text}" and memories as "title: none | text: {text}". Cache vectors in IndexedDB keyed by the SHA-256 of model + dimensions + prefixed text (crypto.subtle), not by memory ID.
+7. Queries: build each resident's retrieval query from its own situation. Remove the hard-coded "party mayor town" words in smallvilleApi.ts.
+8. Consolidation may prune only existing memories with importance <= 4; ignore any other IDs the model returns.
+
+Tests: one perception memory per visit unless something salient happens; importance examples (fire >= 8, bench <= 3); retention never drops importance >= 8 within 7 days and writes summaries; markAccessed raises recency; mixed coverage falls back to lexical; consolidation can't prune an importance-9 memory. Update the existing compactMemories and consolidation tests.
+
+Acceptance (Diagnostics, fake LLM, 7 days): perception notes at most 50% of stored memories; at most 30 observation memories per resident per day; every seed memory with importance >= 8 present or cited by a summary; 0 duplicate IDs; memories per resident within the cap; saved world under 5 MB.
+Phase 5: Conversations with natural length and shared agreements
+This lets talks run 2 to 6 turns, stops one resident's private plans from steering the other's memory, and turns spoken agreements into the same meeting in both calendars.
+Phase 5 — Conversations v2: natural length, no leaks, shared agreements. Follow the Master brief rules.
+
+Problem (measured through the real server with a stubbed model): every conversation is exactly 3 calls (A, B, A), about 4,000 input tokens. B writes its memory of the talk before hearing A's last line, and A's importance rating is stored for both. Each resident's memory query includes the partner's private intention: changing only Maria's private plan changed 2 of the 8 memories Isabella recalled (the text itself never reaches Isabella's prompt, which is good). Agreements are one-sided: Maria agreed to meet, but no block was added for Isabella. Rumour spread is decided by keyword substrings.
+
+1. Turn loop (server.ts /api/agent/converse; keep the separate per-speaker prompts): 2 to MAX_TURNS spoken lines (default 6), alternating. Each turn is one call with only the speaker's private context and the spoken transcript so far, returning { spokenLine, privateThought, endConversation }. Stop when a speaker ends it (after at least 2 turns) or at MAX_TURNS.
+2. Recall per turn: the client sends, for each resident, a candidate pool (top 30 by importance, recency and relevance to that resident's own situation; descriptions only). The server re-ranks that pool every turn with the shared retrieveMemories, using the speaker's own intention, the partner's name and visible action, and the last spoken line. Never use the partner's private 'currently' or memories. Call markAccessed (Phase 4) for the memories used.
+3. After the dialogue, make two calls in parallel, one per participant, each with the full transcript and its own private context. Each returns { summary, importance (1 to 10), planUpdate?, emotionalShift, tomUpdate, memeIdsDiscussed (chosen from the rumours this resident knew or just heard; send their ids and topics), newNews: [{ topic, keywords }] }.
+4. Agreements: from the spoken transcript, the initiator's wrap-up call also extracts at most one shared agreement { day: 'today' | 'tomorrow', minuteOfDay, locationId, activity }. Apply it to BOTH residents' schedules as the same fixed block with an absolute day (Phase 3 rules). Reject past times.
+5. Starting a talk: keep the System-1/System-2 gate, and add a reason (has news the partner lacks, has a goal involving the partner, close rapport plus social need). Pass the reason to the initiator's first turn ("You want to tell Maria about...").
+6. Sim time: a conversation lasts turns x 1.5 sim minutes from its start. Speech bubbles show each line in order during that window. ConversationRecord stores reason, turns, endedBy and agreement.
+7. Rumours: spread only through memeIdsDiscussed, checked against the list sent. newNews creates new rumours with the speaker as origin; skip near-duplicates of existing rumours (token overlap, or embeddings when available).
+
+Tests: resident A's prompts and recalled memories are identical whatever B's private intention is; the turn cap and endConversation work; each participant gets its own summary and importance; one agreement gives both residents the same fixed block; rumours spread only through validated ids. Update the existing conversation test.
+
+Acceptance: Diagnostics (fake LLM) reports average turns and calls per conversation, never more than MAX_TURNS + 2 calls; the leak test passes; no agreement lands in the past.
+Phase 6: Reflection, planning and reactions as in the paper
+This rebuilds reflection as the paper's two-step process with checked evidence, plans whole days top-down, and adds the missing step where residents react to what they see.
+Phase 6 — Reflection, planning and reactions as in the paper. Follow the Master brief rules.
+
+Problem: reflection is one prompt over 22 retrieved memories. Its "focal questions" never drive retrieval, and its evidence IDs are never checked (a made-up ID was stored as-is). Residents never react to what they see; only conversations and whispers change plans. In Park et al. 2023, residents reflect when the summed importance of recent events passes a threshold (150 in their implementation), about two or three times a day. They start from the 100 most recent memories and 3 questions. They plan top-down: a day plan of 5 to 8 chunks, then hourly, then 5 to 15 minute steps. At each step they decide whether to react; if they do, the plan is regenerated from that moment.
+
+1. Reflection, 2 calls: call 1 gets the 100 most recent memories (or those since the last reflection, at least 20) and returns 3 focal questions. The client retrieves the top 12 memories per question with retrieveMemories. Call 2 gets the three question-and-evidence sets and returns up to 5 insights, each citing evidence IDs from those sets. Drop cited IDs that weren't provided, and drop insights left with no valid evidence. Reflections may cite earlier reflections. Calibrate REFLECTION_THRESHOLD to the Phase 4 importance scale so Diagnostics shows 1.5 to 3 reflections per resident per day; never more than 3.
+2. Morning plan (05:00 to 07:00 sim, through the scheduler). Inputs: identity, yesterday's consolidated lessons, today's fixed commitments listed as constraints, and drives. Output: 5 to 8 blocks from wake-up to sleep, each with kind, place and optional object, including meals. The engine checks: no overlaps, inside the day, valid place and object, and every fixed block kept (re-inserted if missing).
+3. Step detail on demand: when a block starts without subSteps, ask for 3 to 5 sub-steps with minutes (a cheap call, only when the budget allows); otherwise split the block by rules.
+4. Reaction step: when a resident gets an observation with importance >= 6, or meets someone it has news or a goal for, enqueue a 'reaction' job (1 call) returning { react: boolean, reason, newActivity?, talkTo? }. If react is true, replace the rest of the current block (fixed blocks stay) or start a conversation. At most 4 reactions per resident per day.
+5. Re-plan (button and reactions) replaces only the blocks between now and the next fixed block.
+
+Tests: made-up evidence IDs dropped; an insight with no valid evidence dropped; the plan checker keeps commitments and rejects overlaps; a broadcast (importance 8) creates a reaction job; reactions capped at 4 a day.
+
+Acceptance (Diagnostics, fake LLM, 4 days): 1.5 to 3 reflections per resident per day; every morning plan has sleep and at least 2 meals; 0 commitments lost to re-plans; at most 4 reactions per resident per day.
+Phase 7: Remove the script and measure emergence
+This is where the app earns the Smallville name: only Isabella knows about the party at the start, and attendance comes from invitations alone. The app then measures spread, attendance and relationship growth against the paper.
+Phase 7 — Emergence: remove the script and measure it like the paper. Follow the Master brief rules.
+
+Problem: 17 of 18 residents have a Hobbs Cafe block between 16:00 and 17:30 in their starting schedules, so with the LLM off, 16 of 18 are at the party every day. Nothing has to spread for the party to happen. In Park et al. 2023, only Isabella knew about the party and only Sam knew about his candidacy at the start. Over two game days with 25 agents, the party news reached 13 agents (52%) and the candidacy 8 (32%); 12 were invited and 5 attended; network density rose from 0.167 to 0.74.
+
+1. Scenario "Valentine's party (paper replication)": start Day 1 at 09:00. The party is on Day 2 from 17:00 to 19:00 at Hobbs Cafe, which gives the news two days to spread, as in the paper. Only Isabella knows (a memory plus a goal to invite neighbours); only Sam knows about his candidacy. Remove party blocks and party memories from every other resident and give them their normal routines. meme_valentine_party.knownBy = { isabella }; meme_mayor_race.knownBy = { sam }. Keep the other two rumours as they are.
+2. Goals: add goals: string[] to AgentState (Isabella: "Invite as many neighbours as possible to my Valentine's party at Hobbs Cafe, Day 2 at 5 PM"). Goals feed the conversation reason, reactions and plans.
+3. Attendance only through decisions: a resident goes to the party only through a fixed block from a conversation agreement, or a block in their own plan made after they heard the news.
+4. Experiments tab: run the scenario live (real LLM, with the budget shown) or headless (fake LLM). Show awareness over time for each rumour; invited, agreed and attended (inside Hobbs Cafe for at least 20 minutes of the party); network density over time (edges = pairs who have talked; density = 2|E| / (|V| x (|V| - 1))); conversations; and LLM calls and tokens. Draw the paper's figures as reference lines. Export the run log as JSON.
+5. Ablations (switches): no reflection; no planning (fixed routine); no memory retrieval (only the 10 most recent memories); no System-2 gate.
+6. Interview battery: 25 questions per resident in the paper's five groups (self-knowledge, memory, plans, reactions, reflections). Store the answers; optionally score them 1 to 5 with an LLM judge, and compare ablations.
+
+Tests: with the LLM off, only Isabella goes to the party; with a fake LLM that accepts half of all invitations, every attendee has an agreement block or a plan block made after hearing the news; density is correct on a toy graph.
+
+Acceptance: Diagnostics with the LLM off shows party attendance of 1 (Isabella). A fake-LLM run shows attendance above 1 only through agreements. The Experiments tab shows awareness %, attendance and density next to the paper's 52% / 32%, 5 of 12, and 0.167 to 0.74.
+Phase 8: UI speed, visibility into thinking, and polish
+This stops the 10-per-second full re-render, shows what the model is doing and what it costs, and makes every button give feedback.
+Phase 8 — UI speed, visibility into thinking, and polish. Follow the Master brief rules.
+
+Problem: App.tsx calls setWorldSnapshot every 100 ms, so every panel re-renders 10 times a second. The Agent Inspector takes about 4 to 5 ms per render and re-runs memory retrieval each tick (about 2 ms with 300 memories), which grows with Phase 4's larger memory. "LLM Calls Saved" counts every quick greeting as a saved call (1,886 in a 7-day run against 38 real conversations). Some buttons silently do nothing while another job runs.
+
+1. State: keep the world in an external store read with useSyncExternalStore and selectors. Panels update at most 4 times a second; the canvas keeps reading the ref every frame. The Inspector subscribes only to the selected resident; memoize SocietyView; virtualize long lists (memories, chronicle).
+2. Cognition panel: jobs in flight; the queue with priorities and wait times; failures and backoff; calls per minute; calls and tokens today; estimated cost (you enter prices per million input and output tokens); the current time-dilation factor.
+3. Honest stats: rename "LLM Calls Saved" to "Quick greetings (no LLM)", and add "LLM calls made" and "Tokens".
+4. Memory inspector: show importance, lastAccessed and source (perception, conversation, reflection, broadcast, summary); make evidence in reflections and summaries clickable; search lexically or semantically.
+5. Conversation viewer: full transcript, a toggle for private thoughts, the reason for talking, and any agreement.
+6. Map: a line between residents who are talking, "Zzz" for sleepers, and a label for outdoor areas.
+7. Feedback: every action shows queued, running or failed; no silent no-ops.
+
+Tests: store selectors; a dev-only overlay that counts React commits per second.
+
+Acceptance: at most 5 React commits per second while playing at 1x; smooth scrolling with 300 memories; every button gives visible feedback.
+Final acceptance checklist
+Tick these off after the last phase you run.
+[ ] npm install, npm run lint, npm run build and npm test pass on a fresh ZIP download.
+[ ] Diagnostics, 4 days at 1x with the fake LLM: every row in Target metrics passes.
+[ ] Diagnostics at 5x with time dilation: at least 20 conversations per sim day and every morning plan before 08:00.
+[ ] One real sim day on the Balanced budget: calls stay within budget, no retry loops, and the cost per sim day is noted from the Cognition panel.
+[ ] Paper-replication scenario with a real model: awareness %, attendance and network density recorded next to the paper's figures.
+[ ] Two browsers on the deployed app keep separate towns; the API rejects requests without x-world-id (and without x-app-token, if you set one).
+[ ] Export a world and import it again; an old save opens without crashing.
+[ ] The README explains keys, providers, limits, costs and the Diagnostics tab.
+Appendix: evidence, method and sources
+Every number in this doc comes from running the project's own, unchanged code; only the LLM was replaced by a stub where noted.
+How it was measured
+• Engine runs: the project's stepWorldState() and apply*Result() functions, run headless for 3 to 7 sim days at the App's tick rate (100 ms ticks; at 1x, one sim minute per 0.65 s).
+• Scheduler runs: a copy of the App's job-picking rules (one job in flight, 14 s between starts, same priority order) with a fake LLM taking 4 s per call. Also run at 2x and 5x, with a persistent failure, and with a 0.5 s model. The near-instant model gave the same conversation count, so the limit is the scheduler, not model speed.
+• Full stack: the project's own smallvilleApi.ts calling its own Express server, with a stub in place of OpenRouter that recorded every prompt.
+• Data checks: a validator over all residents, buildings, objects, doors and rumours.
+• Tooling: a clean copy with the Phase 0 fixes applied. npm install (179 packages), lint and build succeed, and npm test passes 12 of 12. Reading the key from .env.local works with dotenv.config({ path: ['.env.local', '.env'] }).
+• Not tested: how good the real model's writing is, real latency, and how often the default free model returns broken JSON.
+Where today's LLM budget goes (1x, input tokens estimated as characters ÷ 4)
+Action
+Calls each
+Input tokens each
+Runs per sim day
+Share of input tokens
+Reflection
+1
+~1,720
+42
+58%
+Morning plan
+1
+~1,600
+18
+23%
+Conversation
+3
+~3,970
+5.3
+17%
+Consolidation
+1
+~2,190
+1
+2%
+That totals about 77 calls and 124,000 input tokens per sim day. Each call also reserves 1,600 to 2,800 output tokens. Interviews (~880 input tokens) and whispers (~970) run only on demand.
+Sources (pages opened for this review)
+• Park et al. 2023, Generative Agents: Interactive Simulacra of Human Behavior: reflection threshold, retrieval scoring, planning, and the diffusion, attendance and density results.
+• OpenRouter API rate limits: free-model limits.
+• Google AI Studio Build mode: the Antigravity agent, server-side keys, costs when shared or deployed, storage limits.
+• Gemini API embeddings guide: task prefixes for gemini-embedding-2.
+• gemini-embedding-2 model page: supported dimensions.

@@ -1,0 +1,6 @@
+{
+  "name": "Smallville — Generative Agents",
+  "description": "Interactive 2D town simulation modeled after Stanford's Smallville generative agents with memory streams, retrieval scoring, reflections, daily planning, and emergent social dialogue.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

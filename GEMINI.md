@@ -25,3 +25,11 @@ When splitting work across parallel workers, separate along these non-overlappin
 - **Client state & services**: `src/store/` and `src/services/`
 - **UI views**: `src/components/`
 - **3D isometric renderer**: `src/components/iso3d/`
+
+## Cross-Laptop Sync (Office ↔ Home)
+- **When the user says "push the latest and sync both"**:
+  1. Push committed Git changes on the active branch (`git push`).
+  2. Run `pwsh -File scripts/agy-sync.ps1 push -AllowLive` (snapshots local `agy` CLI chats via SQLite `VACUUM INTO` and uploads them to the **private** `agy-chat-sync` GitHub release; never commit chats or `.db` files into the public `bostromia` repo).
+- **When switching to the other laptop (before opening `agy`)**:
+  - Clone/open the repo at the identical path `D:\Experiment\Bostromia`.
+  - Run `git pull; .\scripts\agy-sync.ps1 pull`, then launch `agy`.
